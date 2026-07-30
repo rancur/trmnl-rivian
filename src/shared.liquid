@@ -23,28 +23,31 @@
   Liquid has no array append — TRMNL's `push` filter silently returns an empty
   array — so lists are built as delimited strings and split at the end. Labels
   never contain a comma.
+
+  Each label reads as a whole phrase, because they get joined into one sentence
+  and "Front left" on its own does not say what is open.
 {%- endcomment -%}
 
 {%- assign d = "" -%}
-{%- if door_fl %}{% assign d = d | append: "Front left," %}{% endif -%}
-{%- if door_fr %}{% assign d = d | append: "Front right," %}{% endif -%}
-{%- if door_rl %}{% assign d = d | append: "Rear left," %}{% endif -%}
-{%- if door_rr %}{% assign d = d | append: "Rear right," %}{% endif -%}
+{%- if door_fl %}{% assign d = d | append: "Front left door," %}{% endif -%}
+{%- if door_fr %}{% assign d = d | append: "Front right door," %}{% endif -%}
+{%- if door_rl %}{% assign d = d | append: "Rear left door," %}{% endif -%}
+{%- if door_rr %}{% assign d = d | append: "Rear right door," %}{% endif -%}
 {%- assign doors_open = d | split: "," -%}
 
 {%- assign w = "" -%}
-{%- if win_fl %}{% assign w = w | append: "Front left," %}{% endif -%}
-{%- if win_fr %}{% assign w = w | append: "Front right," %}{% endif -%}
-{%- if win_rl %}{% assign w = w | append: "Rear left," %}{% endif -%}
-{%- if win_rr %}{% assign w = w | append: "Rear right," %}{% endif -%}
+{%- if win_fl %}{% assign w = w | append: "Front left window," %}{% endif -%}
+{%- if win_fr %}{% assign w = w | append: "Front right window," %}{% endif -%}
+{%- if win_rl %}{% assign w = w | append: "Rear left window," %}{% endif -%}
+{%- if win_rr %}{% assign w = w | append: "Rear right window," %}{% endif -%}
 {%- assign windows_open = w | split: "," -%}
 
 {%- assign s = "" -%}
 {%- if frunk %}{% assign s = s | append: "Frunk," %}{% endif -%}
 {%- if tonneau %}{% assign s = s | append: "Tonneau," %}{% endif -%}
 {%- if tailgate %}{% assign s = s | append: "Tailgate," %}{% endif -%}
-{%- if tunnel_l %}{% assign s = s | append: "Gear tunnel L," %}{% endif -%}
-{%- if tunnel_r %}{% assign s = s | append: "Gear tunnel R," %}{% endif -%}
+{%- if tunnel_l %}{% assign s = s | append: "Left gear tunnel," %}{% endif -%}
+{%- if tunnel_r %}{% assign s = s | append: "Right gear tunnel," %}{% endif -%}
 {%- assign storage_open = s | split: "," -%}
 
 {%- assign open = doors_open | concat: windows_open | concat: storage_open -%}
@@ -74,7 +77,7 @@
 
 {%- comment -%}
   Anything the driver would want to act on. Counted so a view too small for the
-  full check row can still say "2 need attention".
+  full check row can still say "2 issues".
 {%- endcomment -%}
 {%- assign issue_count = 0 -%}
 {%- unless locked %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
@@ -84,24 +87,43 @@
 {%- unless fluids_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
 {%- unless software_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
 
-{%- comment -%} One-line health digest for views too narrow for the check row. {%- endcomment -%}
 {%- if issue_count == 0 -%}
   {%- assign health_summary = "All good" -%}
 {%- else -%}
   {%- assign health_summary = "issue" | pluralize: issue_count -%}
 {%- endif -%}
 
-{%- comment -%} ---------- charge / mode ---------- {%- endcomment -%}
+{%- comment -%} ---------- status line ----------
 
-{%- if charging -%}
+  What the truck is doing, and where. Most specific state wins. `location` is a
+  zone name from Home Assistant, blank when the truck is somewhere unnamed.
+
+{%- endcomment -%}
+
+{%- if location and location != "" -%}
+  {%- assign at_place = " at " | append: location -%}
+{%- else -%}
+  {%- assign at_place = "" -%}
+{%- endif -%}
+
+{%- if service_mode -%}
+  {%- assign status_line = "In service" -%}
+  {%- assign mode = "In service" -%}
+{%- elsif driving -%}
+  {%- assign status_line = "Driving" -%}
+  {%- assign mode = "Driving" -%}
+{%- elsif charging -%}
+  {%- assign status_line = "Charging" | append: at_place -%}
   {%- assign mode = "Charging" -%}
 {%- elsif plugged_in -%}
+  {%- assign status_line = "Plugged in" | append: at_place -%}
   {%- assign mode = "Plugged in" -%}
-{%- elsif gear and gear != "Park" -%}
-  {%- assign mode = "Driving" -%}
 {%- else -%}
+  {%- assign status_line = "Parked" | append: at_place -%}
   {%- assign mode = "Parked" -%}
 {%- endif -%}
+
+{%- comment -%} ---------- charge ---------- {%- endcomment -%}
 
 {%- if soc <= 15 and charging == false -%}
   {%- assign low_charge = true -%}
@@ -128,6 +150,7 @@
 {%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
 {%- assign odometer_fmt = odometer | number_with_delimiter -%}
 {%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
+
 {%- comment -%}
   `vehicle_label` is the plugin's custom field, so a value set in TRMNL wins over
   the name Home Assistant sends. Liquid's `default` treats "" as blank, so an
@@ -137,92 +160,84 @@
 
 {%- comment -%} ---------- vehicle diagram ----------
 
-  Top-down schematic, nose up. Anything open fills solid so it reads instantly
-  on a 1-bit panel; a flagged tire fills its wheel. Captured once here so every
-  view can drop it in with {{ vehicle_svg }}.
+  Top-down schematic, nose up, captured once so every view can drop it in with
+  {{ vehicle_svg }}. Open closures are drawn the way they actually open rather
+  than just shaded: doors swing out on their hinge, the frunk lifts past the
+  nose, the tailgate drops past the tail, gear tunnels swing out the side. A
+  window that is down leaves a solid gap in the door, and the tonneau's slats
+  disappear when it is open. A flagged tire fills its wheel.
+
+  The viewBox is wider and taller than the body so swung-open panels have room
+  to extend outside the silhouette without clipping.
 
 {%- endcomment -%}
-
-{%- if door_fl %}{% assign f_dfl = "currentColor" %}{% else %}{% assign f_dfl = "none" %}{% endif -%}
-{%- if door_fr %}{% assign f_dfr = "currentColor" %}{% else %}{% assign f_dfr = "none" %}{% endif -%}
-{%- if door_rl %}{% assign f_drl = "currentColor" %}{% else %}{% assign f_drl = "none" %}{% endif -%}
-{%- if door_rr %}{% assign f_drr = "currentColor" %}{% else %}{% assign f_drr = "none" %}{% endif -%}
-{%- if win_fl %}{% assign f_wfl = "currentColor" %}{% else %}{% assign f_wfl = "none" %}{% endif -%}
-{%- if win_fr %}{% assign f_wfr = "currentColor" %}{% else %}{% assign f_wfr = "none" %}{% endif -%}
-{%- if win_rl %}{% assign f_wrl = "currentColor" %}{% else %}{% assign f_wrl = "none" %}{% endif -%}
-{%- if win_rr %}{% assign f_wrr = "currentColor" %}{% else %}{% assign f_wrr = "none" %}{% endif -%}
-{%- if frunk %}{% assign f_frunk = "currentColor" %}{% else %}{% assign f_frunk = "none" %}{% endif -%}
-{%- if tailgate %}{% assign f_tail = "currentColor" %}{% else %}{% assign f_tail = "none" %}{% endif -%}
-{%- if tonneau %}{% assign f_bed = "currentColor" %}{% else %}{% assign f_bed = "none" %}{% endif -%}
-{%- if tunnel_l %}{% assign f_tunl = "currentColor" %}{% else %}{% assign f_tunl = "none" %}{% endif -%}
-{%- if tunnel_r %}{% assign f_tunr = "currentColor" %}{% else %}{% assign f_tunr = "none" %}{% endif -%}
-{%- if tire_fl %}{% assign f_tfl = "none" %}{% else %}{% assign f_tfl = "currentColor" %}{% endif -%}
-{%- if tire_fr %}{% assign f_tfr = "none" %}{% else %}{% assign f_tfr = "currentColor" %}{% endif -%}
-{%- if tire_rl %}{% assign f_trl = "none" %}{% else %}{% assign f_trl = "currentColor" %}{% endif -%}
-{%- if tire_rr %}{% assign f_trr = "none" %}{% else %}{% assign f_trr = "currentColor" %}{% endif -%}
 
 {%- capture vehicle_svg -%}
-{%- comment -%}
-  width/height 100% with the default preserveAspectRatio lets the SVG fit
-  whatever box the view gives it, instead of dictating its own size.
-{%- endcomment -%}
-<svg viewBox="0 0 120 300" fill="none" stroke="currentColor" stroke-width="2"
+<svg viewBox="0 0 180 340" fill="none" stroke="currentColor" stroke-width="2"
      style="width:100%;height:100%;display:block">
-  <!-- wheels, at the axles -->
-  <rect x="0.5" y="104" width="9" height="36" rx="4" fill="{{ f_tfl }}"/>
-  <rect x="110.5" y="104" width="9" height="36" rx="4" fill="{{ f_tfr }}"/>
-  <rect x="0.5" y="214" width="9" height="36" rx="4" fill="{{ f_trl }}"/>
-  <rect x="110.5" y="214" width="9" height="36" rx="4" fill="{{ f_trr }}"/>
+  <!-- wheels; a flagged tire fills -->
+  <rect x="29" y="124" width="9" height="36" rx="4" fill="{% if tire_fl %}none{% else %}currentColor{% endif %}"/>
+  <rect x="142" y="124" width="9" height="36" rx="4" fill="{% if tire_fr %}none{% else %}currentColor{% endif %}"/>
+  <rect x="29" y="234" width="9" height="36" rx="4" fill="{% if tire_rl %}none{% else %}currentColor{% endif %}"/>
+  <rect x="142" y="234" width="9" height="36" rx="4" fill="{% if tire_rr %}none{% else %}currentColor{% endif %}"/>
 
   <!-- body: 104 x 288 is the R1T's real footprint ratio -->
-  <rect x="8" y="6" width="104" height="288" rx="16" stroke-width="2.5"/>
+  <rect x="38" y="26" width="104" height="288" rx="16" stroke-width="2.5"/>
 
   <!-- light bar across the nose -->
-  <path d="M26 15 H94" stroke-width="3"/>
+  <path d="M56 35 H124" stroke-width="3"/>
 
-  <!-- frunk -->
-  <rect x="20" y="24" width="80" height="44" rx="6" fill="{{ f_frunk }}"/>
+  <!-- frunk; lifts past the nose when open -->
+  <rect x="50" y="44" width="80" height="44" rx="6"/>
+  {% if frunk %}<rect x="52" y="4" width="76" height="22" rx="4" fill="currentColor"/>{% endif %}
 
-  <!-- windshield -->
-  <path d="M22 74 H98 L90 92 H30 Z" stroke-width="1.5"/>
+  <!-- glasshouse; kept to two shapes so it stays readable at ~150px wide -->
+  <path d="M52 94 H128 L120 112 H60 Z" stroke-width="1.5"/>
+  <rect x="62" y="114" width="56" height="78" rx="4" stroke-width="1.5"/>
 
-  <!-- roof -->
-  <rect x="32" y="94" width="56" height="74" rx="4" stroke-width="1.5"/>
+  <!-- doors; the leaf swings out on its hinge when open. Left doors rotate
+       clockwise and right doors anti-clockwise to swing away from the body. -->
+  <rect x="39" y="116" width="21" height="37" rx="3"/>
+  <rect x="39" y="153" width="21" height="37" rx="3"/>
+  <rect x="120" y="116" width="21" height="37" rx="3"/>
+  <rect x="120" y="153" width="21" height="37" rx="3"/>
+  {% if door_fl %}<rect x="33" y="116" width="5" height="37" rx="2" fill="currentColor" transform="rotate(40 38 116)"/>{% endif %}
+  {% if door_rl %}<rect x="33" y="153" width="5" height="37" rx="2" fill="currentColor" transform="rotate(40 38 153)"/>{% endif %}
+  {% if door_fr %}<rect x="142" y="116" width="5" height="37" rx="2" fill="currentColor" transform="rotate(-40 142 116)"/>{% endif %}
+  {% if door_rr %}<rect x="142" y="153" width="5" height="37" rx="2" fill="currentColor" transform="rotate(-40 142 153)"/>{% endif %}
 
-  <!-- rear window -->
-  <path d="M30 170 H90 L98 186 H22 Z" stroke-width="1.5"/>
-
-  <!-- doors -->
-  <rect x="9" y="96" width="21" height="37" rx="3" fill="{{ f_dfl }}"/>
-  <rect x="9" y="133" width="21" height="37" rx="3" fill="{{ f_drl }}"/>
-  <rect x="90" y="96" width="21" height="37" rx="3" fill="{{ f_dfr }}"/>
-  <rect x="90" y="133" width="21" height="37" rx="3" fill="{{ f_drr }}"/>
-
-  <!-- windows, on the inboard edge of each door -->
-  <rect x="22" y="101" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wfl }}"/>
-  <rect x="22" y="138" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wrl }}"/>
-  <rect x="92" y="101" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wfr }}"/>
-  <rect x="92" y="138" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wrr }}"/>
+  <!-- windows; a lowered one leaves a gap in the door -->
+  <rect x="52" y="121" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_fl %}currentColor{% else %}none{% endif %}"/>
+  <rect x="52" y="158" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_rl %}currentColor{% else %}none{% endif %}"/>
+  <rect x="122" y="121" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_fr %}currentColor{% else %}none{% endif %}"/>
+  <rect x="122" y="158" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_rr %}currentColor{% else %}none{% endif %}"/>
 
   {% if body_style == "truck" %}
-    <!-- gear tunnel, between cab and bed -->
-    <rect x="9" y="190" width="21" height="18" rx="3" fill="{{ f_tunl }}"/>
-    <rect x="90" y="190" width="21" height="18" rx="3" fill="{{ f_tunr }}"/>
-    <!-- bed + tailgate -->
-    <rect x="14" y="212" width="92" height="64" rx="4" fill="{{ f_bed }}"/>
-    <rect x="14" y="278" width="92" height="12" rx="3" fill="{{ f_tail }}"/>
+    <!-- gear tunnel; swings out the side -->
+    <rect x="39" y="210" width="21" height="18" rx="3"/>
+    <rect x="120" y="210" width="21" height="18" rx="3"/>
+    {% if tunnel_l %}<rect x="19" y="211" width="19" height="16" rx="3" fill="currentColor"/>{% endif %}
+    {% if tunnel_r %}<rect x="142" y="211" width="19" height="16" rx="3" fill="currentColor"/>{% endif %}
+
+    <!-- bed; the tonneau's slats vanish when it is open -->
+    <rect x="44" y="232" width="92" height="64" rx="4"/>
+    {% unless tonneau %}
+      <path d="M48 248 H132 M48 264 H132 M48 280 H132" stroke-width="1.5"/>
+    {% endunless %}
   {% else %}
-    <!-- cargo area + liftgate -->
-    <rect x="14" y="190" width="92" height="86" rx="4" fill="{{ f_bed }}"/>
-    <rect x="14" y="278" width="92" height="12" rx="3" fill="{{ f_tail }}"/>
+    <rect x="44" y="210" width="92" height="86" rx="4"/>
   {% endif %}
+
+  <!-- tailgate; drops past the tail when open -->
+  <rect x="44" y="298" width="92" height="12" rx="3"/>
+  {% if tailgate %}<rect x="46" y="314" width="88" height="22" rx="4" fill="currentColor"/>{% endif %}
 </svg>
 {%- endcapture -%}
 
 {%- comment -%}
   Front-view mark for the title bar: the vehicle's face, with the light bar that
-  reads even at 28px. Not the Rivian trademark — override with `logo_url` in the
-  payload to use an official asset.
+  reads even at 28px. Not the Rivian trademark — set the plugin's Logo URL field
+  to use an official asset instead.
 {%- endcomment -%}
 {%- capture vehicle_mark -%}
 <svg class="image" viewBox="0 0 36 24" fill="none" stroke="currentColor" stroke-width="2.5"

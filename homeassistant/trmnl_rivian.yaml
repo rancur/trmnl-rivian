@@ -57,6 +57,24 @@ template:
               {%- set body_style = 'suv' -%}
             {%- endif -%}
 
+            {#- Where the truck is. The device tracker reports a zone name when
+                it is inside one, 'home' for the home zone, and 'not_home'
+                otherwise — which we blank out so the screen just says "Parked".
+                Rename your zones in HA and the screen follows. -#}
+            {%- set zone = states('device_tracker.' ~ vehicle ~ '_location') -%}
+            {%- if zone in ['not_home', 'unknown', 'unavailable', 'none', ''] -%}
+              {%- set location = '' -%}
+            {%- elif zone == 'home' -%}
+              {%- set location = 'Home' -%}
+            {%- else -%}
+              {%- set location = zone | title -%}
+            {%- endif -%}
+
+            {#- powerState 'Go' means the truck is awake and moving. -#}
+            {%- set driving = states(S ~ 'power_state') | lower == 'go'
+                              or (states(S ~ 'gear_selector') | lower not in ['park', 'unknown', 'unavailable', '']) -%}
+            {%- set service_mode = states(S ~ 'service_mode') | lower in ['true', 'on', 'yes', '1'] -%}
+
             {#- `locked_state` is a LOCK binary sensor: 'on' means UNLOCKED.
                 Anything else (including unavailable) is treated as locked so a
                 dropped connection does not raise a false alarm. -#}
@@ -89,7 +107,8 @@ template:
                 look like new data and force a needless e-ink redraw. -#}
             {%- set watched = [soc_ent, range_ent, temp_ent, odo_ent,
                                B ~ 'locked_state', B ~ 'charging_status',
-                               B ~ 'charger_connection'] -%}
+                               B ~ 'charger_connection',
+                               'device_tracker.' ~ vehicle ~ '_location'] -%}
             {%- set ns2 = namespace(latest=None) -%}
             {%- for e in watched -%}
               {%- set st = states[e] -%}
@@ -115,6 +134,9 @@ template:
                   'temp_unit': (state_attr(temp_ent, 'unit_of_measurement') | default('°F', true)) | replace('°', ''),
                   'odometer': states(odo_ent) | float(0) | round(0) | int,
                   'gear': states(S ~ 'gear_selector') | default('Park', true) | title,
+                  'location': location,
+                  'driving': driving,
+                  'service_mode': service_mode,
 
                   'locked': locked,
                   'plugged_in': is_state(B ~ 'charger_connection', 'on'),

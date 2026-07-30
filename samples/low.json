@@ -37,5 +37,8 @@
   "battery_12v_ok": true,
   "fluids_ok": true,
   "software_ok": false,
-  "updated_at": "2026-07-30T19:12:00-0700"
+  "updated_at": "2026-07-30T19:12:00-0700",
+  "location": "Work",
+  "service_mode": false,
+  "driving": false
 }

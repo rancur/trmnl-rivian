@@ -30,6 +30,8 @@ STATES = {
     "sensor.r1t_cabin_temperature": ("21.6", {"unit_of_measurement": "°C"}),
     "sensor.r1t_odometer": ("18432.7", {"unit_of_measurement": "mi"}),
     "sensor.r1t_gear_selector": ("park", {}),
+    "sensor.r1t_power_state": ("Ready", {}),
+    "sensor.r1t_service_mode": ("false", {}),
     "sensor.r1t_power": ("11.24", {"unit_of_measurement": "kW"}),
     "sensor.r1t_charging_time_remaining": ("97", {"unit_of_measurement": "min"}),
     "sensor.r1t_tire_pressure_front_left_status": ("OK", {}),
@@ -48,6 +50,7 @@ STATES = {
     "binary_sensor.r1t_pet_mode": ("off", {}),
     "binary_sensor.r1t_window_front_left": ("on", {}),
     "binary_sensor.r1t_tailgate": ("on", {}),
+    "device_tracker.r1t_location": ("home", {}),
 }
 
 DEVICE = {"name": "R1T", "name_by_user": "Gluten Free Grocery Getter", "model": "R1T"}
@@ -132,7 +135,7 @@ def main():
         "vehicle", "model", "body_style", "soc", "soc_limit", "range",
         "distance_unit", "cabin_temp", "temp_unit", "odometer", "gear", "locked",
         "plugged_in", "charging", "charge_power", "charge_eta_min",
-        "preconditioning", "pet_mode",
+        "preconditioning", "pet_mode", "location", "driving", "service_mode",
         "door_fl", "door_fr", "door_rl", "door_rr",
         "win_fl", "win_fr", "win_rl", "win_rr",
         "frunk", "tonneau", "tailgate", "tunnel_l", "tunnel_r",
@@ -159,6 +162,9 @@ def main():
         "battery_12v_ok": True,
         "charge_power": 11,    # quantised from 11.24
         "charge_eta_min": 95,  # quantised from 97 to the nearest 5
+        "location": "Home",    # device_tracker 'home' zone
+        "driving": False,      # power_state Ready, gear park
+        "service_mode": False,
     }
     failures = [
         f"  {k}: expected {v!r}, got {merge.get(k)!r}"

@@ -5,12 +5,16 @@
     <!-- Charge, and the figures you'd act on -->
     <div class="col--span-3 flex flex--col flex--left gap--small w--full">
 
-      <div class="flex flex--col flex--left gap--none">
-        <span class="label label--small">State of charge</span>
-        <div class="flex flex--row flex--bottom gap--xsmall">
-          <span class="value value--xxlarge value--tnums">{{ soc }}</span>
-          <span class="value value--small">%</span>
-        </div>
+      <div class="flex flex--row flex--center-y gap--small">
+        <span class="title title--small">{{ status_line }}</span>
+        {% if low_charge %}<span class="label label--small label--filled">Low charge</span>{% endif %}
+        {% if preconditioning %}<span class="label label--small label--outline">Preconditioning</span>{% endif %}
+        {% if pet_mode %}<span class="label label--small label--outline">Pet mode</span>{% endif %}
+      </div>
+
+      <div class="flex flex--row flex--bottom gap--xsmall">
+        <span class="value value--xxxlarge value--tnums">{{ soc }}</span>
+        <span class="value value--base">%</span>
       </div>
 
       <div class="progress-bar progress-bar--base w--full">
@@ -21,12 +25,9 @@
       </div>
 
       <div class="flex flex--row flex--center-y flex--between w--full">
-        <div class="flex flex--row flex--center-y gap--small">
-          <span class="label label--small">{{ mode_detail }}</span>
-          {% if low_charge %}<span class="label label--small label--filled">Low charge</span>{% endif %}
-          {% if preconditioning %}<span class="label label--small label--outline">Preconditioning</span>{% endif %}
-          {% if pet_mode %}<span class="label label--small label--outline">Pet mode</span>{% endif %}
-        </div>
+        <span class="label label--small">
+          {%- if charging and charge_power > 0 %}{{ charge_power }} kW &middot; {{ eta }} to limit{% endif -%}
+        </span>
         <span class="label label--small">Limit {{ soc_limit }}%</span>
       </div>
 
@@ -35,11 +36,7 @@
       <div class="grid grid--cols-3 gap--medium w--full">
         {% render "stat", label: "Range", value: range, unit: distance_unit %}
         {% render "stat", label: "Cabin", value: cabin_display %}
-        {% if charging %}
-          {% render "stat", label: "Full in", value: eta %}
-        {% else %}
-          {% render "stat", label: "Odometer", value: odometer_fmt, unit: distance_unit %}
-        {% endif %}
+        {% render "stat", label: "Odometer", value: odometer_fmt, unit: distance_unit %}
       </div>
 
     </div>
@@ -61,19 +58,22 @@
   <!-- Everything the truck could be unhappy about, in one row -->
   <div class="flex flex--col gap--small w--full">
     <div class="divider"></div>
-    <div class="flex flex--row flex--center-y flex--between w--full">
-      <div class="flex flex--row flex--center-y gap--medium">
-        {% render "check", label: "Locked", ok: locked %}
-        {% render "check", label: "Closed", ok: closures_ok %}
-        {% render "check", label: "Tires", ok: tires_ok %}
-        {% render "check", label: "12V", ok: battery_12v_ok %}
-        {% render "check", label: "Fluids", ok: fluids_ok %}
-        {% render "check", label: "Software", ok: software_ok %}
-      </div>
-      {% unless closures_ok %}
-        <span class="label label--small" data-clamp="1">{{ closure_summary }}</span>
-      {% endunless %}
+    <div class="flex flex--row flex--center-y flex--left gap--medium w--full">
+      {% render "check", label: "Locked", ok: locked %}
+      {% render "check", label: "Closed", ok: closures_ok %}
+      {% render "check", label: "Tires", ok: tires_ok %}
+      {% render "check", label: "12V", ok: battery_12v_ok %}
+      {% render "check", label: "Fluids", ok: fluids_ok %}
+      {% render "check", label: "Software", ok: software_ok %}
     </div>
+
+    {%- comment -%}
+      Its own full-width line: with five things open the list is far too long to
+      share a row with the checks.
+    {%- endcomment -%}
+    {% unless closures_ok %}
+      <span class="label label--small" data-clamp="1">{{ closure_summary }}</span>
+    {% endunless %}
   </div>
 
 </div>
