@@ -4,24 +4,40 @@
     <div class="flex flex--col flex--left gap--none">
       <span class="title title--small">{{ status_line }}</span>
       <div class="flex flex--row flex--bottom gap--xsmall">
-        <span class="value value--xlarge value--tnums">{{ soc }}</span>
-        <span class="value value--xsmall">%</span>
+        <span class="value value--xlarge value--tnums">{{ soc_display }}</span>
+        {% if soc_known %}<span class="value value--xsmall">%</span>{% endif %}
       </div>
     </div>
-    {% render "stat", label: "Range", value: range, unit: distance_unit %}
+    {% render "stat", label: "Range", value: range_display, unit: range_unit %}
     {% render "stat", label: "Cabin", value: cabin_display %}
   </div>
 
   <div class="progress-bar progress-bar--xsmall w--full">
     <div class="track">
-      <div class="fill" style="width: {{ soc }}%"></div>
+      {% if soc_known %}<div class="fill" style="width: {{ soc }}%"></div>{% endif %}
     </div>
   </div>
 
+  {%- comment -%}
+    There is only room for one thing on each side here, so the left slot runs
+    strictly worst-first: a dead feed outranks the charge figures, which outrank
+    the closure summary. The right slot carries the health tally in the same
+    three states as the full check row — good, bad, or not vouched for.
+  {%- endcomment -%}
   <div class="flex flex--row flex--center-y flex--between w--full">
-    <span class="label label--small">{% if charging and charge_power > 0 %}{{ charge_power }} kW &middot; {{ eta }}{% else %}{{ closure_summary }}{% endif %}</span>
-    {% if issue_count == 0 %}
+    <span class="label label--small{% if stale %} label--filled{% endif %}" data-clamp="1">
+      {%- if stale -%}
+        {{ stale_label }}
+      {%- elsif charging == true -%}
+        {{ charge_line }}
+      {%- else -%}
+        {{ closure_summary }}
+      {%- endif -%}
+    </span>
+    {% if health_state == "good" %}
       <span class="label label--small">&#10003;&nbsp;{{ health_summary }}</span>
+    {% elsif health_state == "unknown" %}
+      <span class="label label--small label--outline" data-clamp="1">?&nbsp;{{ health_summary }}</span>
     {% else %}
       <span class="label label--small label--filled" data-clamp="1">&#10007;&nbsp;{{ health_summary }}</span>
     {% endif %}

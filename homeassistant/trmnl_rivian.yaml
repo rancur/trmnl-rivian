@@ -2,6 +2,7 @@
 #
 # Install:
 #   1. Copy this file to  <config>/packages/trmnl_rivian.yaml
+#      (or generate it: tools/configure_ha.py --slug <your-slug> --out ...)
 #   2. Make sure configuration.yaml has:
 #        homeassistant:
 #          packages: !include_dir_named packages
@@ -13,12 +14,57 @@
 # slug is whatever prefixes your Rivian entities — check Developer Tools > States
 # for `battery_state_of_charge`.
 #
-# How the push is triggered: the template sensor below re-renders only when one
-# of the entities it reads actually changes, so its `payload` attribute is a
-# content fingerprint. The automation fires on that attribute changing, which
-# means a webhook goes out when the truck's state changes and not otherwise.
-# Noisy values are quantised so a charger drifting between 11.2 and 11.4 kW does
-# not count as a change.
+# ---------------------------------------------------------------------------
+# THE ONE RULE THIS FILE OBEYS
+#
+# A sensor that did not report is `none`, never 0 and never "healthy". Rivian's
+# cloud API changes without notice, and when it does the integration's entities
+# go `unavailable` rather than disappearing. Coercing those with `| float(0)`
+# renders a confident dashboard — 0% charge, a "Low charge" badge, six green
+# ticks — describing a vehicle nobody is actually talking to. Every read below
+# therefore tests for `unknown`/`unavailable` first and emits JSON `null`, which
+# the Liquid layer renders as "?" rather than as good news.
+# ---------------------------------------------------------------------------
+#
+# WHERE THE DATA COMES FROM  (matters, because these fail independently)
+#
+#   vehicleState        — one GraphQL subscription carrying charge, range,
+#                         closures, tyres, locks, software. Nearly everything
+#                         on screen. Note that a single bad field takes the
+#                         WHOLE subscription down, so the realistic failure is
+#                         "every entity unavailable at once", not "one gap".
+#   charging coordinator — the old `getLiveSessionData` query. Rivian moved live
+#                         telemetry to a protobuf-over-WebSocket transport
+#                         ("Parallax") and this is not currently recoverable.
+#                         Only two values here are used, both optional:
+#                           sensor.<slug>_charging_speed             (kW now)
+#                           sensor.<slug>_charging_energy_delivered  (session kWh)
+#                         When they are dark the screen drops the kW figure and
+#                         estimates session energy from SOC x battery capacity,
+#                         flagged on screen with a "~".
+#
+# Charge percentage, charge limit, range, charge ETA, charger-connected and
+# charging-active all come from vehicleState and keep working. See README.md
+# for the integration version to pin.
+#
+# HOW THE PUSH IS TRIGGERED
+#
+# The payload sensor re-renders only when an entity it reads actually changes,
+# so its `payload` attribute is a content fingerprint. Noisy values are
+# quantised so a charger drifting between 11.2 and 11.4 kW is not a change.
+# Two automations feed one queued script:
+#   - anything the driver would act on (unlocked, something open, charging
+#     started, data went dark) QUEUES a push and always gets shown;
+#   - cosmetic drift (SOC ticking 64 -> 65) is dropped if the rate-limit window
+#     has not elapsed, and rides along on the next push.
+
+# The push throttle needs somewhere to remember when it last fired. Declared
+# here so the package is self-contained — no helper to create by hand.
+input_datetime:
+  rivian_trmnl_last_push:
+    name: Rivian TRMNL last push
+    has_date: true
+    has_time: true
 
 template:
   # --- last charge session ---------------------------------------------------
@@ -39,7 +85,13 @@ template:
       - name: Rivian Charge Start SOC
         unique_id: rivian_charge_start_soc
         unit_of_measurement: "%"
-        state: "{{ states('sensor.r1t_battery_state_of_charge') | float(0) | round(0) }}"
+        # 'unknown' rather than 0: a session that began while the vehicle was
+        # unreachable has no start point, and inventing one would report a
+        # charge that never happened.
+        state: >-
+          {%- set v = states('sensor.r1t_battery_state_of_charge') -%}
+          {{ 'unknown' if v in ['unknown', 'unavailable', 'none', 'None', '']
+             else v | float(0) | round(0) | int }}
 
   - trigger:
       - platform: state
@@ -52,12 +104,36 @@ template:
         icon: mdi:battery-charging-100
         state: "{{ now().strftime('%Y-%m-%dT%H:%M:%S%z') }}"
         attributes:
-          start_soc: "{{ states('sensor.rivian_charge_start_soc') | float(0) | round(0) | int }}"
-          end_soc: "{{ states('sensor.r1t_battery_state_of_charge') | float(0) | round(0) | int }}"
-          kwh: "{{ states('sensor.r1t_charging_energy_delivered') | float(0) | round(1) }}"
+          start_soc: >-
+            {%- set v = states('sensor.rivian_charge_start_soc') -%}
+            {{ none if v in ['unknown', 'unavailable', 'none', 'None', '']
+               else v | float(0) | round(0) | int }}
+          end_soc: >-
+            {%- set v = states('sensor.r1t_battery_state_of_charge') -%}
+            {{ none if v in ['unknown', 'unavailable', 'none', 'None', '']
+               else v | float(0) | round(0) | int }}
+          # Measured session energy, from the charging coordinator. Null while
+          # that coordinator is dark; `kwh_est` below covers the gap.
+          kwh: >-
+            {%- set v = states('sensor.r1t_charging_energy_delivered') -%}
+            {{ none if v in ['unknown', 'unavailable', 'none', 'None', '']
+               else v | float(0) | round(1) }}
+          # Fallback estimate: SOC delta against the pack's usable capacity,
+          # which lives in vehicleState and survives. Ignores charging losses,
+          # so it reads a little low — the screen marks it with a "~".
+          kwh_est: >-
+            {%- set cap = states('sensor.r1t_battery_capacity') -%}
+            {%- set s = states('sensor.rivian_charge_start_soc') -%}
+            {%- set e = states('sensor.r1t_battery_state_of_charge') -%}
+            {%- set bad = ['unknown', 'unavailable', 'none', 'None', ''] -%}
+            {{ none if (cap in bad or s in bad or e in bad)
+               else ((e | float(0) - s | float(0)) / 100 * cap | float(0)) | round(1) }}
           # Odometer at the end of the charge, so we can tell later whether the
-          # truck has been driven since.
-          odometer: "{{ states('sensor.r1t_odometer') | float(0) | round(0) | int }}"
+          # vehicle has been driven since. Null if it was not readable.
+          odometer: >-
+            {%- set v = states('sensor.r1t_odometer') -%}
+            {{ none if v in ['unknown', 'unavailable', 'none', 'None', '']
+               else v | float(0) | round(0) | int }}
 
   # --- payload ---------------------------------------------------------------
   - sensor:
@@ -67,7 +143,9 @@ template:
         # Short, human-readable state; the real content is in `payload`.
         state: >-
           {%- set vehicle = 'r1t' -%}
-          {{ states('sensor.' ~ vehicle ~ '_battery_state_of_charge') }}%
+          {%- set v = states('sensor.' ~ vehicle ~ '_battery_state_of_charge') -%}
+          {{ 'no data' if v in ['unknown', 'unavailable', 'none', 'None', '']
+             else v ~ '%' }}
         attributes:
           payload: >-
             {#- The one thing you need to change: -#}
@@ -75,6 +153,10 @@ template:
 
             {%- set S = 'sensor.' ~ vehicle ~ '_' -%}
             {%- set B = 'binary_sensor.' ~ vehicle ~ '_' -%}
+
+            {#- Anything in this list means "the sensor did not report". It is
+                never coerced to a number or to a healthy boolean. -#}
+            {%- set NODATA = ['unknown', 'unavailable', 'none', 'None', ''] -%}
 
             {%- set soc_ent = S ~ 'battery_state_of_charge' -%}
             {%- set range_ent = S ~ 'estimated_vehicle_range' -%}
@@ -84,7 +166,8 @@ template:
             {#- Name and model come from the device registry, so the screen shows
                 whatever you named the vehicle in the Rivian app. Guarded because
                 device_id() returns none if the entity does not exist yet, and
-                device_attr(none, ...) raises. -#}
+                device_attr(none, ...) raises. A name is not telemetry, so a
+                fallback here invents nothing. -#}
             {%- set dev = device_id(soc_ent) -%}
             {%- if dev -%}
               {%- set model = device_attr(dev, 'model') | default('', true) -%}
@@ -97,19 +180,24 @@ template:
               {%- set name = 'Rivian' -%}
             {%- endif -%}
 
-            {#- R1T/R2T have a bed and gear tunnel; R1S/R3 do not. -#}
-            {%- if 'T' in model.upper().replace('RIVIAN', '') -%}
+            {#- R1T/R2T have a bed and gear tunnel; R1S/R3 do not. Unknown model
+                means unknown body, and the view picks its own default. -#}
+            {%- if model in NODATA -%}
+              {%- set body_style = none -%}
+            {%- elif 'T' in model.upper().replace('RIVIAN', '') -%}
               {%- set body_style = 'truck' -%}
             {%- else -%}
               {%- set body_style = 'suv' -%}
             {%- endif -%}
 
-            {#- Where the truck is. The device tracker reports a zone name when
+            {#- Where the vehicle is. The device tracker reports a zone name when
                 it is inside one, 'home' for the home zone, and 'not_home'
                 otherwise — which we blank out so the screen just says "Parked".
-                Rename your zones in HA and the screen follows. -#}
+                Rename your zones in HA and the screen follows. A blank here is
+                "no named place", which is not the same as a broken sensor, so
+                it stays a string rather than becoming null. -#}
             {%- set zone = states('device_tracker.' ~ vehicle ~ '_location') -%}
-            {%- if zone in ['not_home', 'unknown', 'unavailable', 'none', ''] -%}
+            {%- if zone in NODATA or zone == 'not_home' -%}
               {%- set location = '' -%}
             {%- elif zone == 'home' -%}
               {%- set location = 'Home' -%}
@@ -117,68 +205,186 @@ template:
               {%- set location = zone | title -%}
             {%- endif -%}
 
-            {#- powerState 'Go' means the truck is awake and moving. -#}
-            {%- set driving = states(S ~ 'power_state') | lower == 'go'
-                              or (states(S ~ 'gear_selector') | lower not in ['park', 'unknown', 'unavailable', '']) -%}
-            {%- set service_mode = states(S ~ 'service_mode') | lower in ['true', 'on', 'yes', '1'] -%}
+            {#- --- numerics: null, never zero --------------------------------- -#}
+            {%- set soc_raw = states(soc_ent) -%}
+            {%- set soc = none if soc_raw in NODATA
+                          else soc_raw | float(0) | round(0) | int -%}
+            {%- set lim_raw = states(S ~ 'battery_state_of_charge_limit') -%}
+            {%- set soc_limit = none if lim_raw in NODATA
+                                else lim_raw | float(0) | round(0) | int -%}
+            {%- set rng_raw = states(range_ent) -%}
+            {%- set range_val = none if rng_raw in NODATA
+                                else rng_raw | float(0) | round(0) | int -%}
+            {%- set tmp_raw = states(temp_ent) -%}
+            {%- set cabin_temp = none if tmp_raw in NODATA
+                                 else tmp_raw | float(0) | round(0) | int -%}
+            {%- set odo_raw = states(odo_ent) -%}
+            {%- set odo = none if odo_raw in NODATA
+                          else odo_raw | float(0) | round(0) | int -%}
+
+            {#- Charge rate comes from the charging coordinator and is the one
+                figure that goes dark on its own. Null, so the view drops the
+                "11 kW" segment instead of claiming 0 kW. -#}
+            {%- set pw_raw = states(S ~ 'charging_speed') -%}
+            {%- set charge_power = none if pw_raw in NODATA
+                                   else pw_raw | float(0) | round(0) | int -%}
+            {#- ETA is vehicleState (timeToEndOfCharge) and keeps working.
+                Quantised to 5 minutes so a drifting estimate is not a change. -#}
+            {%- set eta_raw = states(S ~ 'charging_time_remaining') -%}
+            {%- set charge_eta_min = none if eta_raw in NODATA
+                                     else ((eta_raw | float(0) / 5) | round(0) | int) * 5 -%}
+
+            {#- --- booleans: null, never "fine" ------------------------------- -#}
+            {%- set ps = states(S ~ 'power_state') -%}
+            {%- set gr = states(S ~ 'gear_selector') -%}
+            {%- if ps in NODATA and gr in NODATA -%}
+              {%- set driving = none -%}
+            {%- else -%}
+              {%- set driving = (ps | lower == 'go')
+                                or (gr not in NODATA and gr | lower != 'park') -%}
+            {%- endif -%}
+            {%- set gear = none if gr in NODATA else gr | title -%}
+
+            {%- set sm = states(S ~ 'service_mode') -%}
+            {%- set service_mode = none if sm in NODATA
+                                   else sm | lower in ['true', 'on', 'yes', '1'] -%}
 
             {#- `locked_state` is a LOCK binary sensor: 'on' means UNLOCKED.
-                Anything else (including unavailable) is treated as locked so a
-                dropped connection does not raise a false alarm. -#}
-            {%- set locked = not is_state(B ~ 'locked_state', 'on') -%}
+                An unavailable lock sensor used to read as "locked", which is
+                the single most dangerous kind of guess this screen can make.
+                It is now null: the check renders "?" and says nothing. -#}
+            {%- set lk = states(B ~ 'locked_state') -%}
+            {%- set locked = none if lk in NODATA else lk != 'on' -%}
+
+            {%- set cs = states(B ~ 'charging_status') -%}
+            {%- set charging = none if cs in NODATA else cs == 'on' -%}
+            {%- set cc = states(B ~ 'charger_connection') -%}
+            {%- set plugged_in = none if cc in NODATA else cc == 'on' -%}
+            {%- set pc = states(B ~ 'cabin_climate_preconditioning') -%}
+            {%- set preconditioning = none if pc in NODATA else pc == 'on' -%}
+            {%- set pm = states(B ~ 'pet_mode') -%}
+            {%- set pet_mode = none if pm in NODATA else pm == 'on' -%}
+
+            {#- Closures are DOOR/WINDOW classed, so 'on' means open. -#}
+            {%- set tg = states(B ~ 'tailgate') -%}
+            {%- set lg = states(B ~ 'liftgate') -%}
+            {%- if tg in NODATA and lg in NODATA -%}
+              {%- set tailgate = none -%}
+            {%- else -%}
+              {%- set tailgate = (tg == 'on') or (lg == 'on') -%}
+            {%- endif -%}
 
             {#- Tyre status vocabulary is not documented; anything outside this
                 known-good list is surfaced. Widen it if you see false alarms.
-                Written out rather than looped so it relies on nothing beyond
-                plain Jinja. -#}
-            {%- set tyre_ok_values = ['ok', 'normal', 'nominal', 'unknown', 'unavailable', ''] -%}
-            {%- set tire_fl = states(S ~ 'tire_pressure_front_left_status') | lower in tyre_ok_values -%}
-            {%- set tire_fr = states(S ~ 'tire_pressure_front_right_status') | lower in tyre_ok_values -%}
-            {%- set tire_rl = states(S ~ 'tire_pressure_rear_left_status') | lower in tyre_ok_values -%}
-            {%- set tire_rr = states(S ~ 'tire_pressure_rear_right_status') | lower in tyre_ok_values -%}
+                An unavailable sensor is null, not "ok". -#}
+            {%- set tyre_ok_values = ['ok', 'normal', 'nominal'] -%}
+            {%- set t_fl = states(S ~ 'tire_pressure_front_left_status') -%}
+            {%- set t_fr = states(S ~ 'tire_pressure_front_right_status') -%}
+            {%- set t_rl = states(S ~ 'tire_pressure_rear_left_status') -%}
+            {%- set t_rr = states(S ~ 'tire_pressure_rear_right_status') -%}
+            {%- set tire_fl = none if t_fl in NODATA else t_fl | lower in tyre_ok_values -%}
+            {%- set tire_fr = none if t_fr in NODATA else t_fr | lower in tyre_ok_values -%}
+            {%- set tire_rl = none if t_rl in NODATA else t_rl | lower in tyre_ok_values -%}
+            {%- set tire_rr = none if t_rr in NODATA else t_rr | lower in tyre_ok_values -%}
 
             {#- Fluids: wiper level is a PROBLEM binary sensor (on = not normal);
-                brake fluid reports a truthy string when low. -#}
-            {%- set brake_low = states(S ~ 'brake_fluid_level_low') | lower in ['true', 'on', 'yes', '1'] -%}
-            {%- set fluids_ok = not (brake_low or is_state(B ~ 'wiper_fluid_level', 'on')) -%}
-
-            {#- Software is "ok" when there is nothing waiting to install. -#}
-            {%- set cur = states(S ~ 'software_ota_current_version') -%}
-            {%- set avail = states(S ~ 'software_ota_available_version') -%}
-            {%- set software_ok = (avail in ['unknown', 'unavailable', '', 'None']) or (cur == avail) -%}
-
-            {%- set batt12_ok = states(S ~ 'twelve_volt_battery_health') | lower
-                                not in ['poor', 'bad', 'low', 'fault', 'faulty', 'degraded', 'failed'] -%}
-
-            {#- Last charge summary, frozen when the session ended. `moved` is
-                odometer-based: if the truck has been driven since, the summary
-                no longer describes the charge that is in the battery. A missing
-                snapshot reads as moved, which hides the panel. -#}
-            {%- set lc = 'sensor.rivian_last_charge' -%}
-            {%- set lc_odo = state_attr(lc, 'odometer') | int(0) -%}
-            {%- set odo_now = states(odo_ent) | float(0) | round(0) | int -%}
-            {%- set moved = (lc_odo == 0) or (odo_now > lc_odo) -%}
-            {%- set lc_at = states(lc) -%}
-            {%- if lc_at in ['unknown', 'unavailable', 'none', ''] -%}
-              {%- set lc_at = '' -%}
+                brake fluid reports a truthy string when low. Null only when
+                neither is readable. -#}
+            {%- set bf = states(S ~ 'brake_fluid_level_low') -%}
+            {%- set wf = states(B ~ 'wiper_fluid_level') -%}
+            {%- if bf in NODATA and wf in NODATA -%}
+              {%- set fluids_ok = none -%}
+            {%- else -%}
+              {%- set fluids_ok = not ((bf | lower in ['true', 'on', 'yes', '1'])
+                                       or (wf == 'on')) -%}
             {%- endif -%}
 
-            {#- Freshness is the newest change among the values on screen, not
-                the time of this render — using now() here would make every push
-                look like new data and force a needless e-ink redraw. -#}
+            {#- Software is "ok" when there is nothing waiting to install. A
+                readable current version with no available version genuinely
+                means nothing is pending; both dark means we do not know. -#}
+            {%- set cur = states(S ~ 'software_ota_current_version') -%}
+            {%- set avail = states(S ~ 'software_ota_available_version') -%}
+            {%- if cur in NODATA and avail in NODATA -%}
+              {%- set software_ok = none -%}
+            {%- elif avail in NODATA -%}
+              {%- set software_ok = true -%}
+            {%- else -%}
+              {%- set software_ok = (cur == avail) -%}
+            {%- endif -%}
+
+            {#- The entity is `12v_battery_health`: the integration's internal
+                key is `twelve_volt_battery_health` but its display name is
+                "12V Battery Health", and Home Assistant builds the entity id
+                from the NAME. Reading the key spelling matched nothing, so this
+                check passed green forever. -#}
+            {%- set b12 = states(S ~ '12v_battery_health') -%}
+            {%- set batt12_ok = none if b12 in NODATA
+                                else b12 | lower not in
+                                  ['poor', 'bad', 'low', 'fault', 'faulty',
+                                   'degraded', 'failed'] -%}
+
+            {#- Last charge summary, frozen when the session ended. `moved` is
+                odometer-based: if the vehicle has been driven since, the summary
+                no longer describes the charge that is in the battery. A missing
+                snapshot, or an unreadable odometer, reads as moved, which hides
+                the panel rather than showing a stale figure. -#}
+            {%- set lc = 'sensor.rivian_last_charge' -%}
+            {%- set lc_odo = state_attr(lc, 'odometer') -%}
+            {%- set moved = true if (lc_odo is none or odo is none)
+                            else (odo > lc_odo | int(0)) -%}
+            {%- set lc_at = states(lc) -%}
+            {%- if lc_at in NODATA -%}
+              {%- set lc_at = '' -%}
+            {%- endif -%}
+            {%- set lc_kwh = state_attr(lc, 'kwh') -%}
+            {%- set lc_kwh_est = state_attr(lc, 'kwh_est') -%}
+            {%- set kwh_estimated = (lc_kwh is none and lc_kwh_est is not none) -%}
+
+            {#- --- freshness --------------------------------------------------
+                Two different questions, and conflating them is how a dead feed
+                looks alive:
+
+                `updated_at` answers "how old are these readings" — the newest
+                last_changed among the values on screen, and only among entities
+                that actually reported. Using now() here would make every push
+                unique and force a needless e-ink redraw; and counting an entity
+                that just changed *to* unavailable would make a dying feed look
+                like it had just refreshed.
+
+                `link_age_min` answers "is anything still talking to us" — time
+                since the newest last_reported, which advances on every poll even
+                when the value is identical. Bucketed on a saturating ladder so
+                a healthy link is always 0 and the payload does not churn; when
+                the feed dies the bucket steps up, the payload changes, and TRMNL
+                re-renders a screen that says so.
+            -#}
             {%- set watched = [soc_ent, range_ent, temp_ent, odo_ent,
                                B ~ 'locked_state', B ~ 'charging_status',
                                B ~ 'charger_connection',
                                'device_tracker.' ~ vehicle ~ '_location'] -%}
-            {%- set ns2 = namespace(latest=None) -%}
+            {%- set ns = namespace(changed=None, reported=None) -%}
             {%- for e in watched -%}
               {%- set st = states[e] -%}
-              {%- if st is not none and (ns2.latest is none or st.last_changed > ns2.latest) -%}
-                {%- set ns2.latest = st.last_changed -%}
+              {%- if st is not none and st.state not in NODATA -%}
+                {%- if ns.changed is none or st.last_changed > ns.changed -%}
+                  {%- set ns.changed = st.last_changed -%}
+                {%- endif -%}
+                {%- set rep = st.last_reported
+                              if st.last_reported is defined and st.last_reported
+                              else st.last_updated -%}
+                {%- if ns.reported is none or rep > ns.reported -%}
+                  {%- set ns.reported = rep -%}
+                {%- endif -%}
               {%- endif -%}
             {%- endfor -%}
-            {%- set updated = (ns2.latest | as_local).strftime('%Y-%m-%dT%H:%M:%S%z')
-                              if ns2.latest else '' -%}
+            {%- set updated = (ns.changed | as_local).strftime('%Y-%m-%dT%H:%M:%S%z')
+                              if ns.changed else '' -%}
+            {%- set link_raw = ((now() - ns.reported).total_seconds() / 60) | int
+                               if ns.reported else 100000 -%}
+            {%- set nsb = namespace(bucket=0) -%}
+            {%- for b in [30, 60, 180, 360, 720, 1440, 2880] -%}
+              {%- if link_raw >= b -%}{%- set nsb.bucket = b -%}{%- endif -%}
+            {%- endfor -%}
 
             {{
               {
@@ -187,39 +393,39 @@ template:
                   'model': model,
                   'body_style': body_style,
 
-                  'soc': states(soc_ent) | float(0) | round(0) | int,
-                  'soc_limit': states(S ~ 'battery_state_of_charge_limit') | float(80) | round(0) | int,
-                  'range': states(range_ent) | float(0) | round(0) | int,
+                  'soc': soc,
+                  'soc_limit': soc_limit,
+                  'range': range_val,
                   'distance_unit': state_attr(range_ent, 'unit_of_measurement') | default('mi', true),
-                  'cabin_temp': states(temp_ent) | float(0) | round(0) | int,
+                  'cabin_temp': cabin_temp,
                   'temp_unit': (state_attr(temp_ent, 'unit_of_measurement') | default('°F', true)) | replace('°', ''),
-                  'odometer': states(odo_ent) | float(0) | round(0) | int,
-                  'gear': states(S ~ 'gear_selector') | default('Park', true) | title,
+                  'odometer': odo,
+                  'gear': gear,
                   'location': location,
                   'driving': driving,
                   'service_mode': service_mode,
 
                   'locked': locked,
-                  'plugged_in': is_state(B ~ 'charger_connection', 'on'),
-                  'charging': is_state(B ~ 'charging_status', 'on'),
-                  'charge_power': states(S ~ 'charging_speed') | float(0) | round(0) | int,
-                  'charge_eta_min': ((states(S ~ 'charging_time_remaining') | float(0) / 5) | round(0) | int) * 5,
-                  'preconditioning': is_state(B ~ 'cabin_climate_preconditioning', 'on'),
-                  'pet_mode': is_state(B ~ 'pet_mode', 'on'),
+                  'plugged_in': plugged_in,
+                  'charging': charging,
+                  'charge_power': charge_power,
+                  'charge_eta_min': charge_eta_min,
+                  'preconditioning': preconditioning,
+                  'pet_mode': pet_mode,
 
-                  'door_fl': is_state(B ~ 'door_front_left', 'on'),
-                  'door_fr': is_state(B ~ 'door_front_right', 'on'),
-                  'door_rl': is_state(B ~ 'door_rear_left', 'on'),
-                  'door_rr': is_state(B ~ 'door_rear_right', 'on'),
-                  'win_fl': is_state(B ~ 'window_front_left', 'on'),
-                  'win_fr': is_state(B ~ 'window_front_right', 'on'),
-                  'win_rl': is_state(B ~ 'window_rear_left', 'on'),
-                  'win_rr': is_state(B ~ 'window_rear_right', 'on'),
-                  'frunk': is_state(B ~ 'front_trunk', 'on'),
-                  'tonneau': is_state(B ~ 'tonneau', 'on'),
-                  'tailgate': is_state(B ~ 'tailgate', 'on') or is_state(B ~ 'liftgate', 'on'),
-                  'tunnel_l': is_state(B ~ 'gear_tunnel_left', 'on'),
-                  'tunnel_r': is_state(B ~ 'gear_tunnel_right', 'on'),
+                  'door_fl': none if states(B ~ 'door_front_left') in NODATA else is_state(B ~ 'door_front_left', 'on'),
+                  'door_fr': none if states(B ~ 'door_front_right') in NODATA else is_state(B ~ 'door_front_right', 'on'),
+                  'door_rl': none if states(B ~ 'door_rear_left') in NODATA else is_state(B ~ 'door_rear_left', 'on'),
+                  'door_rr': none if states(B ~ 'door_rear_right') in NODATA else is_state(B ~ 'door_rear_right', 'on'),
+                  'win_fl': none if states(B ~ 'window_front_left') in NODATA else is_state(B ~ 'window_front_left', 'on'),
+                  'win_fr': none if states(B ~ 'window_front_right') in NODATA else is_state(B ~ 'window_front_right', 'on'),
+                  'win_rl': none if states(B ~ 'window_rear_left') in NODATA else is_state(B ~ 'window_rear_left', 'on'),
+                  'win_rr': none if states(B ~ 'window_rear_right') in NODATA else is_state(B ~ 'window_rear_right', 'on'),
+                  'frunk': none if states(B ~ 'front_trunk') in NODATA else is_state(B ~ 'front_trunk', 'on'),
+                  'tonneau': none if states(B ~ 'tonneau') in NODATA else is_state(B ~ 'tonneau', 'on'),
+                  'tailgate': tailgate,
+                  'tunnel_l': none if states(B ~ 'gear_tunnel_left') in NODATA else is_state(B ~ 'gear_tunnel_left', 'on'),
+                  'tunnel_r': none if states(B ~ 'gear_tunnel_right') in NODATA else is_state(B ~ 'gear_tunnel_right', 'on'),
 
                   'tire_fl': tire_fl,
                   'tire_fr': tire_fr,
@@ -229,30 +435,137 @@ template:
                   'fluids_ok': fluids_ok,
                   'software_ok': software_ok,
 
-                  'last_charge_start_soc': state_attr(lc, 'start_soc') | int(0),
-                  'last_charge_end_soc': state_attr(lc, 'end_soc') | int(0),
-                  'last_charge_kwh': state_attr(lc, 'kwh') | float(0) | round(1),
+                  'last_charge_start_soc': state_attr(lc, 'start_soc'),
+                  'last_charge_end_soc': state_attr(lc, 'end_soc'),
+                  'last_charge_kwh': lc_kwh if lc_kwh is not none else lc_kwh_est,
+                  'last_charge_kwh_est': kwh_estimated,
                   'last_charge_at': lc_at,
                   'moved_since_charge': moved,
 
-                  'updated_at': updated
+                  'updated_at': updated,
+                  'link_age_min': nsb.bucket
                 }
               } | to_json
             }}
 
+  # --- what is worth interrupting for ---------------------------------------
+  # A compact fingerprint of only the fields that justify spending a push
+  # immediately. Ordinary drift — state of charge, range, cabin temperature,
+  # odometer — is deliberately absent, so this state holds still while the
+  # vehicle merely sits there getting warmer.
+  #
+  # It has to be a sensor rather than a template trigger: Home Assistant's
+  # template trigger fires on a transition from falsy to truthy, not on the
+  # value changing, so a fingerprint string (always truthy) would fire exactly
+  # once and then never again. A state trigger on a sensor fires on every
+  # change, which is what is actually wanted.
+  #
+  # One character per field keeps it well inside the 255-character limit on a
+  # sensor state: 1 = yes, 0 = no, ? = did not report.
+  - sensor:
+      - name: Rivian TRMNL Alert Key
+        unique_id: rivian_trmnl_alert_key
+        icon: mdi:bell-alert
+        state: >-
+          {%- set p = state_attr('sensor.rivian_trmnl_payload', 'payload') -%}
+          {%- if p in [none, ''] -%}
+            none
+          {%- else -%}
+            {#- The payload attribute is the whole webhook body, so the fields
+                are one level down under `merge_variables`. Reading the envelope
+                by mistake makes every lookup undefined, which Jinja renders as
+                falsy — a fingerprint of all zeros that never changes and
+                silently disables priority pushes. -#}
+            {%- set m = (p | from_json).merge_variables -%}
+            {%- set ns = namespace(s='') -%}
+            {%- for k in ['locked', 'charging', 'plugged_in', 'driving',
+                          'service_mode', 'pet_mode', 'preconditioning',
+                          'door_fl', 'door_fr', 'door_rl', 'door_rr',
+                          'win_fl', 'win_fr', 'win_rl', 'win_rr',
+                          'frunk', 'tonneau', 'tailgate', 'tunnel_l', 'tunnel_r',
+                          'tire_fl', 'tire_fr', 'tire_rl', 'tire_rr',
+                          'battery_12v_ok', 'fluids_ok', 'software_ok'] -%}
+              {%- set v = m[k] -%}
+              {%- set ns.s = ns.s ~ ('?' if v is none else ('1' if v else '0')) -%}
+            {%- endfor -%}
+            {#- Low charge and a dead feed are both worth a push of their own. -#}
+            {{ ns.s }}-{{ m.link_age_min }}-{{ 'L' if (m.soc is not none and m.soc <= 15) else 'n' }}
+          {%- endif -%}
+
 rest_command:
+  # The raw send. Nothing should call this directly except the throttled script
+  # below — it has no rate limiting of its own.
   trmnl_rivian_push:
     url: !secret trmnl_webhook_url
     method: post
     content_type: "application/json"
     payload: "{{ body }}"
 
+script:
+  # Every push goes through here so the rate limit is enforced in exactly one
+  # place. Queued rather than dropped: a caller that arrives inside the window
+  # waits it out instead of losing its update.
+  #
+  # TRMNL allows 12 webhooks/hour (30 on TRMNL+). A hard minimum gap of 330 s
+  # admits at most floor(3600/330) + 1 = 11 pushes in any rolling hour, which
+  # stays under the limit with margin. The previous value of 290 s allowed 13
+  # and earned 429s. On TRMNL+ you can lower this to 130 s (max 28/hour).
+  #
+  # The body is read AFTER the delay, so a queued push sends the newest payload
+  # rather than the one that was current when it was scheduled — several rapid
+  # changes coalesce into one accurate screen.
+  trmnl_rivian_push:
+    alias: Rivian -> TRMNL (rate-limited push)
+    mode: queued
+    max: 4
+    max_exceeded: silent
+    sequence:
+      - delay:
+          seconds: >-
+            {{ [0, 330 - (now().timestamp()
+                 - (state_attr('input_datetime.rivian_trmnl_last_push', 'timestamp') | float(0)))]
+               | max | round(0) | int }}
+      - condition: template
+        value_template: >-
+          {{ state_attr('sensor.rivian_trmnl_payload', 'payload') not in [none, ''] }}
+      # Claim the window before sending, so a sibling run released at the same
+      # moment cannot slip a second request through inside the minimum gap.
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.rivian_trmnl_last_push
+        data:
+          timestamp: "{{ now().timestamp() }}"
+      - service: rest_command.trmnl_rivian_push
+        data:
+          body: "{{ state_attr('sensor.rivian_trmnl_payload', 'payload') }}"
+
 automation:
-  # Fires when the payload's content changes. The time pattern is only a
-  # heartbeat in case a webhook is ever dropped. TRMNL accepts 12 webhooks/hour
-  # (30 on TRMNL+), so pushes are throttled to at most one every 5 minutes.
-  - id: trmnl_rivian_push
-    alias: Rivian -> TRMNL
+  # Things you would want to know now. These queue: they wait out the rate-limit
+  # window rather than being dropped, so a tailgate left open is never silently
+  # held back until the next heartbeat.
+  #
+  # The trigger is a coarse fingerprint of only the fields worth interrupting
+  # for, so ordinary drift (SOC, range, cabin temperature, odometer) does not
+  # reach it.
+  - id: trmnl_rivian_push_priority
+    alias: Rivian -> TRMNL (priority)
+    mode: queued
+    max: 4
+    max_exceeded: silent
+    trigger:
+      - platform: state
+        entity_id: sensor.rivian_trmnl_alert_key
+    action:
+      - service: script.turn_on
+        target:
+          entity_id: script.trmnl_rivian_push
+
+  # Everything else: the figures move, but nobody needs to be interrupted. These
+  # are dropped if the window has not elapsed and ride along on the next push.
+  # The time pattern is a heartbeat — it is also what makes a dead feed visible,
+  # because `link_age_min` climbs and the screen re-renders saying so.
+  - id: trmnl_rivian_push_routine
+    alias: Rivian -> TRMNL (routine)
     mode: single
     max_exceeded: silent
     trigger:
@@ -264,12 +577,10 @@ automation:
     condition:
       - condition: template
         value_template: >-
-          {{ this.attributes.last_triggered is none
-             or (now() - this.attributes.last_triggered).total_seconds() > 290 }}
-      - condition: template
-        value_template: >-
-          {{ state_attr('sensor.rivian_trmnl_payload', 'payload') not in [none, ''] }}
+          {{ now().timestamp()
+             - (state_attr('input_datetime.rivian_trmnl_last_push', 'timestamp') | float(0))
+             > 330 }}
     action:
-      - service: rest_command.trmnl_rivian_push
-        data:
-          body: "{{ state_attr('sensor.rivian_trmnl_payload', 'payload') }}"
+      - service: script.turn_on
+        target:
+          entity_id: script.trmnl_rivian_push

@@ -29,125 +29,309 @@
   }
 </style>
 
-{%- comment -%} ---------- defaults ----------
+{%- comment -%} ---------- three states, not two ----------
 
-  A view must never invent an alarm out of a field that simply is not there —
-  an incomplete payload should read as "nothing to report", not as a truck with
-  four flat tires and the doors unlocked.
+  Every field arrives in one of three conditions, and the whole correctness of
+  this screen rests on keeping them apart:
 
-  Liquid's `default` filter is no use here: it treats `false` as blank, so
-  `false | default: true` returns true. Only an explicit `== nil` test can tell
-  "absent" from "genuinely false", so that is what is used throughout.
+    true / a number   the sensor reported, and this is what it said
+    false             the sensor reported, and the answer is no
+    nil               the sensor did not report
+
+  A view must never render nil as either of the other two. Rendering it as
+  `false` invents an alarm — four flat tyres on a vehicle that simply has not
+  checked in. Rendering it as `true`, or as `0`, is far worse: it produces a
+  confident dashboard describing a vehicle nobody is talking to, and there is
+  nothing on screen to say so. A dead integration used to render here as 0%
+  charge, a "Low charge" badge and six green ticks.
+
+  So nil propagates. Numbers become an em dash, checks become "?", and the
+  status line says it does not know. Liquid's `default` filter is no help —
+  it treats `false` as blank, so `false | default: true` returns true — and
+  `nil` compares false against everything, so every test below is explicit.
 
 {%- endcomment -%}
 
-{%- if locked == nil %}{% assign locked = true %}{% endif -%}
-{%- if tire_fl == nil %}{% assign tire_fl = true %}{% endif -%}
-{%- if tire_fr == nil %}{% assign tire_fr = true %}{% endif -%}
-{%- if tire_rl == nil %}{% assign tire_rl = true %}{% endif -%}
-{%- if tire_rr == nil %}{% assign tire_rr = true %}{% endif -%}
-{%- if battery_12v_ok == nil %}{% assign battery_12v_ok = true %}{% endif -%}
-{%- if fluids_ok == nil %}{% assign fluids_ok = true %}{% endif -%}
-{%- if software_ok == nil %}{% assign software_ok = true %}{% endif -%}
+{%- assign UNKNOWN = "&mdash;" -%}
+{%- assign nothing = nil -%}
 
-{%- if charging == nil %}{% assign charging = false %}{% endif -%}
-{%- if plugged_in == nil %}{% assign plugged_in = false %}{% endif -%}
-{%- if driving == nil %}{% assign driving = false %}{% endif -%}
-{%- if service_mode == nil %}{% assign service_mode = false %}{% endif -%}
-{%- if preconditioning == nil %}{% assign preconditioning = false %}{% endif -%}
-{%- if pet_mode == nil %}{% assign pet_mode = false %}{% endif -%}
-
-{%- comment -%} No snapshot means nothing to report, so treat it as driven. {%- endcomment -%}
-{%- if moved_since_charge == nil %}{% assign moved_since_charge = true %}{% endif -%}
+{%- comment -%} Only these two are safe to default: a body shape is cosmetic,
+  and an absent charge snapshot is genuinely "no session on record" rather than
+  a failed sensor. {%- endcomment -%}
+{%- if body_style == nil %}{% assign body_style = "truck" %}{% endif -%}
 {%- if last_charge_start_soc == nil %}{% assign last_charge_start_soc = 0 %}{% endif -%}
 {%- if last_charge_end_soc == nil %}{% assign last_charge_end_soc = 0 %}{% endif -%}
+{%- if moved_since_charge == nil %}{% assign moved_since_charge = true %}{% endif -%}
+{%- if link_age_min == nil %}{% assign link_age_min = 0 %}{% endif -%}
 
-{%- if soc == nil %}{% assign soc = 0 %}{% endif -%}
-{%- if soc_limit == nil %}{% assign soc_limit = 100 %}{% endif -%}
-{%- if charge_power == nil %}{% assign charge_power = 0 %}{% endif -%}
-{%- if charge_eta_min == nil %}{% assign charge_eta_min = 0 %}{% endif -%}
-{%- if body_style == nil %}{% assign body_style = "truck" %}{% endif -%}
+{%- comment -%} ---------- numeric display ---------- {%- endcomment -%}
 
-{%- comment -%} ---------- closures ---------- {%- endcomment -%}
+{%- if soc == nil -%}
+  {%- assign soc_known = false -%}
+  {%- assign soc_display = UNKNOWN -%}
+{%- else -%}
+  {%- assign soc_known = true -%}
+  {%- assign soc_display = soc -%}
+{%- endif -%}
 
-{%- comment -%}
+{%- if range == nil -%}
+  {%- assign range_display = UNKNOWN -%}
+  {%- assign range_unit = nothing -%}
+{%- else -%}
+  {%- assign range_display = range -%}
+  {%- assign range_unit = distance_unit -%}
+{%- endif -%}
+
+{%- if cabin_temp == nil -%}
+  {%- assign cabin_display = UNKNOWN -%}
+{%- else -%}
+  {%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
+{%- endif -%}
+
+{%- if odometer == nil -%}
+  {%- assign odometer_display = UNKNOWN -%}
+  {%- assign odometer_unit = nothing -%}
+{%- else -%}
+  {%- assign odometer_display = odometer | number_with_delimiter -%}
+  {%- assign odometer_unit = distance_unit -%}
+{%- endif -%}
+
+{%- comment -%} ---------- closures ----------
+
   Liquid has no array append — TRMNL's `push` filter silently returns an empty
   array — so lists are built as delimited strings and split at the end. Labels
   never contain a comma.
 
   Each label reads as a whole phrase, because they get joined into one sentence
   and "Front left" on its own does not say what is open.
+
+  Note every test is `== true`. A nil closure is not open, but it is not closed
+  either, and it must not be counted as one.
 {%- endcomment -%}
 
 {%- assign d = "" -%}
-{%- if door_fl %}{% assign d = d | append: "Front left door," %}{% endif -%}
-{%- if door_fr %}{% assign d = d | append: "Front right door," %}{% endif -%}
-{%- if door_rl %}{% assign d = d | append: "Rear left door," %}{% endif -%}
-{%- if door_rr %}{% assign d = d | append: "Rear right door," %}{% endif -%}
+{%- if door_fl == true %}{% assign d = d | append: "Front left door," %}{% endif -%}
+{%- if door_fr == true %}{% assign d = d | append: "Front right door," %}{% endif -%}
+{%- if door_rl == true %}{% assign d = d | append: "Rear left door," %}{% endif -%}
+{%- if door_rr == true %}{% assign d = d | append: "Rear right door," %}{% endif -%}
 {%- assign doors_open = d | split: "," -%}
 
 {%- assign w = "" -%}
-{%- if win_fl %}{% assign w = w | append: "Front left window," %}{% endif -%}
-{%- if win_fr %}{% assign w = w | append: "Front right window," %}{% endif -%}
-{%- if win_rl %}{% assign w = w | append: "Rear left window," %}{% endif -%}
-{%- if win_rr %}{% assign w = w | append: "Rear right window," %}{% endif -%}
+{%- if win_fl == true %}{% assign w = w | append: "Front left window," %}{% endif -%}
+{%- if win_fr == true %}{% assign w = w | append: "Front right window," %}{% endif -%}
+{%- if win_rl == true %}{% assign w = w | append: "Rear left window," %}{% endif -%}
+{%- if win_rr == true %}{% assign w = w | append: "Rear right window," %}{% endif -%}
 {%- assign windows_open = w | split: "," -%}
 
 {%- assign s = "" -%}
-{%- if frunk %}{% assign s = s | append: "Frunk," %}{% endif -%}
-{%- if tonneau %}{% assign s = s | append: "Tonneau," %}{% endif -%}
-{%- if tailgate %}{% assign s = s | append: "Tailgate," %}{% endif -%}
-{%- if tunnel_l %}{% assign s = s | append: "Left gear tunnel," %}{% endif -%}
-{%- if tunnel_r %}{% assign s = s | append: "Right gear tunnel," %}{% endif -%}
+{%- if frunk == true %}{% assign s = s | append: "Frunk," %}{% endif -%}
+{%- if tonneau == true %}{% assign s = s | append: "Tonneau," %}{% endif -%}
+{%- if tailgate == true %}{% assign s = s | append: "Tailgate," %}{% endif -%}
+{%- if tunnel_l == true %}{% assign s = s | append: "Left gear tunnel," %}{% endif -%}
+{%- if tunnel_r == true %}{% assign s = s | append: "Right gear tunnel," %}{% endif -%}
 {%- assign storage_open = s | split: "," -%}
 
 {%- assign open = doors_open | concat: windows_open | concat: storage_open -%}
 {%- assign open_count = open | size -%}
 
-{%- if open_count == 0 -%}
+{%- comment -%} How many closures never reported. {%- endcomment -%}
+{%- assign closures_unknown = 0 -%}
+{%- if door_fl == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if door_fr == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if door_rl == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if door_rr == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if win_fl == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if win_fr == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if win_rl == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if win_rr == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if frunk == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if tonneau == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if tailgate == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if tunnel_l == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+{%- if tunnel_r == nil %}{% assign closures_unknown = closures_unknown | plus: 1 %}{% endif -%}
+
+{%- comment -%}
+  Something known-open outranks the gaps: we can say "the tailgate is up" even
+  if three other sensors are quiet. But "all closed" may only be claimed when
+  every closure actually said so.
+{%- endcomment -%}
+{%- if open_count > 0 -%}
+  {%- assign closures_ok = false -%}
+  {%- assign closure_summary = open | join: " &middot; " -%}
+{%- elsif closures_unknown == 0 -%}
   {%- assign closures_ok = true -%}
   {%- assign closure_summary = "All closed" -%}
 {%- else -%}
-  {%- assign closures_ok = false -%}
-  {%- assign closure_summary = open | join: " &middot; " -%}
-{%- endif -%}
-
-{%- if locked and closures_ok -%}
-  {%- assign secure = true -%}
-{%- else -%}
-  {%- assign secure = false -%}
+  {%- assign closures_ok = nothing -%}
+  {%- assign closure_summary = "Closures unknown" -%}
 {%- endif -%}
 
 {%- comment -%} ---------- health ---------- {%- endcomment -%}
 
-{%- if tire_fl and tire_fr and tire_rl and tire_rr -%}
+{%- comment -%}
+  Tyres collapse the same way: one flagged tyre is a fault whatever the others
+  did, but "all fine" needs all four to have reported.
+{%- endcomment -%}
+{%- assign tires_unknown = 0 -%}
+{%- if tire_fl == nil %}{% assign tires_unknown = tires_unknown | plus: 1 %}{% endif -%}
+{%- if tire_fr == nil %}{% assign tires_unknown = tires_unknown | plus: 1 %}{% endif -%}
+{%- if tire_rl == nil %}{% assign tires_unknown = tires_unknown | plus: 1 %}{% endif -%}
+{%- if tire_rr == nil %}{% assign tires_unknown = tires_unknown | plus: 1 %}{% endif -%}
+
+{%- if tire_fl == false or tire_fr == false or tire_rl == false or tire_rr == false -%}
+  {%- assign tires_ok = false -%}
+{%- elsif tires_unknown == 0 -%}
   {%- assign tires_ok = true -%}
 {%- else -%}
-  {%- assign tires_ok = false -%}
+  {%- assign tires_ok = nothing -%}
 {%- endif -%}
 
 {%- comment -%}
-  Anything the driver would want to act on. Counted so a view too small for the
-  full check row can still say "2 issues".
+  Two separate tallies, because they mean opposite things. `issue_count` is what
+  the driver should act on. `unknown_count` is what the screen cannot vouch for.
+  Collapsing the second into either the first or into silence is precisely the
+  bug this plugin exists not to have.
 {%- endcomment -%}
 {%- assign issue_count = 0 -%}
-{%- unless locked %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
-{%- unless closures_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
-{%- unless tires_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
-{%- unless battery_12v_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
-{%- unless fluids_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
-{%- unless software_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+{%- if locked == false %}{% assign issue_count = issue_count | plus: 1 %}{% endif -%}
+{%- if closures_ok == false %}{% assign issue_count = issue_count | plus: 1 %}{% endif -%}
+{%- if tires_ok == false %}{% assign issue_count = issue_count | plus: 1 %}{% endif -%}
+{%- if battery_12v_ok == false %}{% assign issue_count = issue_count | plus: 1 %}{% endif -%}
+{%- if fluids_ok == false %}{% assign issue_count = issue_count | plus: 1 %}{% endif -%}
+{%- if software_ok == false %}{% assign issue_count = issue_count | plus: 1 %}{% endif -%}
 
-{%- if issue_count == 0 -%}
-  {%- assign health_summary = "All good" -%}
-{%- else -%}
+{%- assign unknown_count = 0 -%}
+{%- if locked == nil %}{% assign unknown_count = unknown_count | plus: 1 %}{% endif -%}
+{%- if closures_ok == nil %}{% assign unknown_count = unknown_count | plus: 1 %}{% endif -%}
+{%- if tires_ok == nil %}{% assign unknown_count = unknown_count | plus: 1 %}{% endif -%}
+{%- if battery_12v_ok == nil %}{% assign unknown_count = unknown_count | plus: 1 %}{% endif -%}
+{%- if fluids_ok == nil %}{% assign unknown_count = unknown_count | plus: 1 %}{% endif -%}
+{%- if software_ok == nil %}{% assign unknown_count = unknown_count | plus: 1 %}{% endif -%}
+
+{%- comment -%}
+  A real fault outranks a gap, but it must not hide one: the small views have
+  room for a single line, and "1 issue" alone would quietly imply the other five
+  checks came back clean. The trailing "4?" is what stops that.
+{%- endcomment -%}
+{%- if issue_count > 0 -%}
+  {%- assign health_state = "bad" -%}
   {%- assign health_summary = "issue" | pluralize: issue_count -%}
+  {%- if unknown_count > 0 -%}
+    {%- assign health_summary = health_summary | append: " &middot; " | append: unknown_count | append: "?" -%}
+  {%- endif -%}
+{%- elsif unknown_count > 0 -%}
+  {%- assign health_state = "unknown" -%}
+  {%- assign health_summary = unknown_count | append: " unknown" -%}
+{%- else -%}
+  {%- assign health_state = "good" -%}
+  {%- assign health_summary = "All good" -%}
+{%- endif -%}
+
+{%- comment -%} ---------- freshness ----------
+
+  Two different questions, and conflating them is how a dead feed looks alive.
+
+  `updated_at` is how old the readings are — the newest change among the values
+  on screen. It is deliberately not the render time, because a timestamp that
+  moves on every push makes every payload unique, defeats TRMNL's deduplication
+  and forces a pointless e-ink redraw. It can be legitimately old: a vehicle
+  asleep in a garage really has not changed.
+
+  `link_age_min` is how long since anything reported at all, measured in Home
+  Assistant and bucketed so a healthy link is always 0. That is the one that
+  means "broken", and it is why a dead feed can announce itself: the bucket
+  steps up, the payload changes, and TRMNL re-renders a screen that says so.
+
+  The age below is computed at render time, which matters because TRMNL
+  re-renders on its own refresh interval. If Home Assistant itself dies nothing
+  pushes at all — but the clock keeps moving, the age keeps growing, and the
+  screen degrades on its own rather than holding a confident stale image.
+
+{%- endcomment -%}
+
+{%- assign now_ts = 'now' | date: '%s' | plus: 0 -%}
+{%- assign updated_ts = 0 -%}
+{%- if updated_at and updated_at != "" -%}
+  {%- assign updated_ts = updated_at | date: '%s' | plus: 0 -%}
+{%- endif -%}
+
+{%- if updated_ts > 0 -%}
+  {%- assign updated_known = true -%}
+  {%- assign data_age_min = now_ts | minus: updated_ts | divided_by: 60 -%}
+  {%- if data_age_min < 0 %}{% assign data_age_min = 0 %}{% endif -%}
+{%- else -%}
+  {%- assign updated_known = false -%}
+  {%- assign data_age_min = 0 -%}
+{%- endif -%}
+
+{%- comment -%}
+  Stale when the feed says it stopped reporting, or when nothing has moved for
+  a day, or when there is no timestamp to judge by at all.
+{%- endcomment -%}
+{%- assign stale_min = 0 -%}
+{%- assign stale = false -%}
+{%- if link_age_min >= 30 -%}
+  {%- assign stale = true -%}
+  {%- assign stale_min = link_age_min -%}
+{%- endif -%}
+{%- if updated_known == false -%}
+  {%- assign stale = true -%}
+{%- elsif data_age_min >= 1440 -%}
+  {%- assign stale = true -%}
+  {%- if data_age_min > stale_min %}{% assign stale_min = data_age_min %}{% endif -%}
+{%- endif -%}
+
+{%- if stale_min >= 1440 -%}
+  {%- assign stale_age = stale_min | divided_by: 1440 | append: "d" -%}
+{%- elsif stale_min >= 60 -%}
+  {%- assign stale_age = stale_min | divided_by: 60 | append: "h" -%}
+{%- else -%}
+  {%- assign stale_age = stale_min | append: "m" -%}
+{%- endif -%}
+
+{%- if updated_known == false -%}
+  {%- assign stale_label = "No data" -%}
+{%- else -%}
+  {%- assign stale_label = "No update " | append: stale_age -%}
+{%- endif -%}
+
+{%- comment -%}
+  The timestamp always carries a date, and that is not belt-and-braces — it is
+  the only thing standing between a dead feed and a convincing wall display.
+
+  TRMNL deduplicates at the data layer: an unchanged payload is dropped *before*
+  the render step, so the template is never re-evaluated and the clock above
+  never advances on its own. If Home Assistant stops pushing entirely, the last
+  image simply stays on the wall exactly as it was rendered. Whatever that image
+  said is what someone will read a week later.
+
+  So a bare "Updated 4:25 PM" is a trap: rendered while perfectly fresh, frozen
+  by the outage, and indistinguishable from live at a glance the following
+  afternoon. "Updated Thu Jul 30, 4:25 PM" survives being frozen, because it was
+  never relative in the first place.
+
+  The relative badge below still has a job — it appears whenever a render *does*
+  happen, which is exactly when Home Assistant is alive and reporting that the
+  integration behind it is not.
+{%- endcomment -%}
+{%- if updated_known == false -%}
+  {%- assign updated_fmt = "" -%}
+  {%- assign updated_short = "" -%}
+  {%- assign updated_label = "No data" -%}
+{%- else -%}
+  {%- assign updated_fmt = updated_at | date: "%a %b %-d, %-I:%M %p" -%}
+  {%- assign updated_short = updated_at | date: "%b %-d, %-I:%M %p" -%}
+  {%- assign updated_label = "Updated " | append: updated_fmt -%}
 {%- endif -%}
 
 {%- comment -%} ---------- status line ----------
 
-  What the truck is doing, and where. Most specific state wins. `location` is a
-  zone name from Home Assistant, blank when the truck is somewhere unnamed.
+  What the vehicle is doing, and where. Most specific state wins. `location` is a
+  zone name from Home Assistant, blank when the vehicle is somewhere unnamed.
+
+  "Parked" is a claim, not a default: it may only be said once the signals that
+  would contradict it have actually reported. When they have not, the screen
+  says so instead of picking the reassuring answer.
 
 {%- endcomment -%}
 
@@ -157,35 +341,73 @@
   {%- assign at_place = "" -%}
 {%- endif -%}
 
-{%- if service_mode -%}
+{%- comment -%}
+  The signature of the whole vehicle-state feed being down: nothing on the
+  charge or security side reported at all.
+{%- endcomment -%}
+{%- if soc == nil and locked == nil and charging == nil and plugged_in == nil -%}
+  {%- assign blackout = true -%}
+{%- else -%}
+  {%- assign blackout = false -%}
+{%- endif -%}
+
+{%- comment -%}
+  Service mode goes first, ahead of the no-data branch, because it is a fact the
+  vehicle reported and not an absence of one. A vehicle can sit at a service
+  centre for a week: the state is correct, the readings are simply old, and the
+  screen must say both. Staleness is carried by its own badge and by the
+  timestamp, so "In service" is never blurred into "we lost contact" — telling a
+  known state apart from an unknown one is the same discipline as telling an
+  unknown one apart from zero.
+{%- endcomment -%}
+{%- if service_mode == true -%}
   {%- assign status_line = "In service" -%}
   {%- assign mode = "In service" -%}
-{%- elsif driving -%}
+{%- elsif blackout -%}
+  {%- assign status_line = "No vehicle data" -%}
+  {%- assign mode = "No data" -%}
+{%- elsif driving == true -%}
   {%- assign status_line = "Driving" -%}
   {%- assign mode = "Driving" -%}
-{%- elsif charging -%}
+{%- elsif charging == true -%}
   {%- assign status_line = "Charging" | append: at_place -%}
   {%- assign mode = "Charging" -%}
-{%- elsif plugged_in -%}
+{%- elsif plugged_in == true -%}
   {%- assign status_line = "Plugged in" | append: at_place -%}
   {%- assign mode = "Plugged in" -%}
+{%- elsif driving == nil or charging == nil or plugged_in == nil -%}
+  {%- assign status_line = "Status unknown" -%}
+  {%- assign mode = "Unknown" -%}
 {%- else -%}
   {%- assign status_line = "Parked" | append: at_place -%}
   {%- assign mode = "Parked" -%}
 {%- endif -%}
 
-{%- comment -%} ---------- charge ---------- {%- endcomment -%}
+{%- comment -%} ---------- charge ----------
 
-{%- if soc <= 15 and charging == false -%}
+  A low-charge warning needs a real number behind it. It used to fire on a
+  missing sensor, because absent coerced to 0 and 0 is less than 15 — the badge
+  that shouted loudest was the one with no data at all.
+
+{%- endcomment -%}
+
+{%- if soc_known and soc <= 15 and charging != true -%}
   {%- assign low_charge = true -%}
 {%- else -%}
   {%- assign low_charge = false -%}
 {%- endif -%}
 
-{%- comment -%} Charge rate is only worth the pixels while current is flowing. {%- endcomment -%}
-{%- if charging and charge_power > 0 -%}
+{%- comment -%}
+  Charge rate is only worth the pixels while current is flowing — and it is the
+  one figure that goes dark on its own, because it is the only thing here still
+  sourced from Rivian's retired live-session query. Nil drops the segment; it
+  never renders as 0 kW.
+{%- endcomment -%}
+{%- if charging == true and charge_power != nil and charge_power > 0 -%}
+  {%- assign charge_power_known = true -%}
   {%- assign mode_detail = mode | append: " &middot; " | append: charge_power | append: " kW" -%}
 {%- else -%}
+  {%- assign charge_power_known = false -%}
   {%- assign mode_detail = mode -%}
 {%- endif -%}
 
@@ -196,39 +418,67 @@
   while the answer still describes the charge in the battery: not charging now,
   and not driven since. One drive and it is history, so it disappears.
 
+  `last_charge_kwh_est` marks a figure derived from the SOC delta and the pack
+  capacity rather than measured at the charger — the measured value needs the
+  retired live-session query. Estimates are shown with a "~" so nobody reads
+  one as metered.
+
 {%- endcomment -%}
 
 {%- assign last_charge_delta = last_charge_end_soc | minus: last_charge_start_soc -%}
-{%- if charging == false and moved_since_charge == false and last_charge_delta > 0 -%}
+{%- if charging != true and moved_since_charge == false and last_charge_delta > 0 -%}
   {%- assign show_last_charge = true -%}
 {%- else -%}
   {%- assign show_last_charge = false -%}
 {%- endif -%}
 {%- assign last_charge_fmt = last_charge_at | date: "%a %-I%p" -%}
-
-{%- comment -%} Charge ETA as "1h 35m" / "45m". {%- endcomment -%}
-{%- assign eta_h = charge_eta_min | divided_by: 60 -%}
-{%- assign eta_m = charge_eta_min | modulo: 60 -%}
-{%- if eta_h > 0 -%}
-  {%- assign eta = eta_h | append: "h " | append: eta_m | append: "m" -%}
+{%- if last_charge_kwh == nil -%}
+  {%- assign last_charge_kwh_label = "" -%}
+{%- elsif last_charge_kwh_est == true -%}
+  {%- assign last_charge_kwh_label = last_charge_kwh | prepend: "~" | append: " kWh" -%}
 {%- else -%}
-  {%- assign eta = eta_m | append: "m" -%}
+  {%- assign last_charge_kwh_label = last_charge_kwh | append: " kWh" -%}
 {%- endif -%}
 
-{%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
-{%- assign odometer_fmt = odometer | number_with_delimiter -%}
-{%- if updated_at and updated_at != "" -%}
-  {%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
+{%- comment -%} Charge ETA as "1h 35m" / "45m", or nothing at all if unknown. {%- endcomment -%}
+{%- if charge_eta_min == nil -%}
+  {%- assign eta_known = false -%}
+  {%- assign eta = UNKNOWN -%}
 {%- else -%}
-  {%- assign updated_fmt = "" -%}
+  {%- assign eta_known = true -%}
+  {%- assign eta_h = charge_eta_min | divided_by: 60 -%}
+  {%- assign eta_m = charge_eta_min | modulo: 60 -%}
+  {%- if eta_h > 0 -%}
+    {%- assign eta = eta_h | append: "h " | append: eta_m | append: "m" -%}
+  {%- else -%}
+    {%- assign eta = eta_m | append: "m" -%}
+  {%- endif -%}
 {%- endif -%}
+
+{%- comment -%}
+  The charge line under the bar. Assembled here so all four views agree, and so
+  each segment can drop out independently as its source goes dark.
+{%- endcomment -%}
+{%- capture charge_line -%}
+  {%- if charging == true -%}
+    {%- if charge_power_known %}{{ charge_power }} kW{% endif -%}
+    {%- if charge_power_known and eta_known %} &middot; {% endif -%}
+    {%- if eta_known %}{{ eta }} to limit{% endif -%}
+    {%- unless charge_power_known or eta_known %}Charging{% endunless -%}
+  {%- elsif show_last_charge -%}
+    Last charge +{{ last_charge_delta }}%
+    {%- if last_charge_kwh_label != "" %} &middot; {{ last_charge_kwh_label }}{% endif -%}
+    {%- if last_charge_at and last_charge_at != "" %} &middot; {{ last_charge_fmt }}{% endif -%}
+  {%- endif -%}
+{%- endcapture -%}
 
 {%- comment -%}
   `vehicle_label` is the plugin's custom field, so a value set in TRMNL wins over
   the name Home Assistant sends. Liquid's `default` treats "" as blank, so an
-  empty field falls through.
+  empty field falls through. A name is not telemetry — falling back here invents
+  nothing.
 {%- endcomment -%}
-{%- assign display_name = vehicle_label | default: vehicle | default: model -%}
+{%- assign display_name = vehicle_label | default: vehicle | default: model | default: "Rivian" -%}
 
 {%- comment -%} ---------- vehicle diagram ----------
 
@@ -242,16 +492,28 @@
   The viewBox is wider and taller than the body so swung-open panels have room
   to extend outside the silhouette without clipping.
 
+  A solid outline is itself a claim — it says "everything you see is shut". When
+  any closure or tyre never reported, the whole silhouette switches to a dashed
+  stroke, so the drawing stops asserting a state it cannot know. Every panel
+  test is `== true` for the same reason: nil must not draw as closed.
+
 {%- endcomment -%}
+
+{%- if closures_unknown == 0 and tires_unknown == 0 -%}
+  {%- assign diagram_dash = "" -%}
+{%- else -%}
+  {%- assign diagram_dash = "5 4" -%}
+{%- endif -%}
 
 {%- capture vehicle_svg -%}
 <svg viewBox="0 0 180 340" fill="none" stroke="currentColor" stroke-width="2"
+     stroke-dasharray="{{ diagram_dash }}"
      style="width:100%;height:100%;display:block">
   <!-- wheels; a flagged tire fills -->
-  <rect x="29" y="124" width="9" height="36" rx="4" fill="{% if tire_fl %}none{% else %}currentColor{% endif %}"/>
-  <rect x="142" y="124" width="9" height="36" rx="4" fill="{% if tire_fr %}none{% else %}currentColor{% endif %}"/>
-  <rect x="29" y="234" width="9" height="36" rx="4" fill="{% if tire_rl %}none{% else %}currentColor{% endif %}"/>
-  <rect x="142" y="234" width="9" height="36" rx="4" fill="{% if tire_rr %}none{% else %}currentColor{% endif %}"/>
+  <rect x="29" y="124" width="9" height="36" rx="4" fill="{% if tire_fl == false %}currentColor{% else %}none{% endif %}"/>
+  <rect x="142" y="124" width="9" height="36" rx="4" fill="{% if tire_fr == false %}currentColor{% else %}none{% endif %}"/>
+  <rect x="29" y="234" width="9" height="36" rx="4" fill="{% if tire_rl == false %}currentColor{% else %}none{% endif %}"/>
+  <rect x="142" y="234" width="9" height="36" rx="4" fill="{% if tire_rr == false %}currentColor{% else %}none{% endif %}"/>
 
   <!-- body: 104 x 288 is the R1T's real footprint ratio -->
   <rect x="38" y="26" width="104" height="288" rx="16" stroke-width="2.5"/>
@@ -261,7 +523,7 @@
 
   <!-- frunk; lifts past the nose when open -->
   <rect x="50" y="44" width="80" height="44" rx="6"/>
-  {% if frunk %}<rect x="52" y="4" width="76" height="22" rx="4" fill="currentColor"/>{% endif %}
+  {% if frunk == true %}<rect x="52" y="4" width="76" height="22" rx="4" fill="currentColor"/>{% endif %}
 
   <!-- glasshouse; kept to two shapes so it stays readable at ~150px wide -->
   <path d="M52 94 H128 L120 112 H60 Z" stroke-width="1.5"/>
@@ -273,27 +535,27 @@
   <rect x="39" y="153" width="21" height="37" rx="3"/>
   <rect x="120" y="116" width="21" height="37" rx="3"/>
   <rect x="120" y="153" width="21" height="37" rx="3"/>
-  {% if door_fl %}<rect x="33" y="116" width="5" height="37" rx="2" fill="currentColor" transform="rotate(40 38 116)"/>{% endif %}
-  {% if door_rl %}<rect x="33" y="153" width="5" height="37" rx="2" fill="currentColor" transform="rotate(40 38 153)"/>{% endif %}
-  {% if door_fr %}<rect x="142" y="116" width="5" height="37" rx="2" fill="currentColor" transform="rotate(-40 142 116)"/>{% endif %}
-  {% if door_rr %}<rect x="142" y="153" width="5" height="37" rx="2" fill="currentColor" transform="rotate(-40 142 153)"/>{% endif %}
+  {% if door_fl == true %}<rect x="33" y="116" width="5" height="37" rx="2" fill="currentColor" transform="rotate(40 38 116)"/>{% endif %}
+  {% if door_rl == true %}<rect x="33" y="153" width="5" height="37" rx="2" fill="currentColor" transform="rotate(40 38 153)"/>{% endif %}
+  {% if door_fr == true %}<rect x="142" y="116" width="5" height="37" rx="2" fill="currentColor" transform="rotate(-40 142 116)"/>{% endif %}
+  {% if door_rr == true %}<rect x="142" y="153" width="5" height="37" rx="2" fill="currentColor" transform="rotate(-40 142 153)"/>{% endif %}
 
   <!-- windows; a lowered one leaves a gap in the door -->
-  <rect x="52" y="121" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_fl %}currentColor{% else %}none{% endif %}"/>
-  <rect x="52" y="158" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_rl %}currentColor{% else %}none{% endif %}"/>
-  <rect x="122" y="121" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_fr %}currentColor{% else %}none{% endif %}"/>
-  <rect x="122" y="158" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_rr %}currentColor{% else %}none{% endif %}"/>
+  <rect x="52" y="121" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_fl == true %}currentColor{% else %}none{% endif %}"/>
+  <rect x="52" y="158" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_rl == true %}currentColor{% else %}none{% endif %}"/>
+  <rect x="122" y="121" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_fr == true %}currentColor{% else %}none{% endif %}"/>
+  <rect x="122" y="158" width="6" height="27" rx="2" stroke-width="1.5" fill="{% if win_rr == true %}currentColor{% else %}none{% endif %}"/>
 
   {% if body_style == "truck" %}
     <!-- gear tunnel; swings out the side -->
     <rect x="39" y="210" width="21" height="18" rx="3"/>
     <rect x="120" y="210" width="21" height="18" rx="3"/>
-    {% if tunnel_l %}<rect x="19" y="211" width="19" height="16" rx="3" fill="currentColor"/>{% endif %}
-    {% if tunnel_r %}<rect x="142" y="211" width="19" height="16" rx="3" fill="currentColor"/>{% endif %}
+    {% if tunnel_l == true %}<rect x="19" y="211" width="19" height="16" rx="3" fill="currentColor"/>{% endif %}
+    {% if tunnel_r == true %}<rect x="142" y="211" width="19" height="16" rx="3" fill="currentColor"/>{% endif %}
 
     <!-- bed; the tonneau's slats vanish when it is open -->
     <rect x="44" y="232" width="92" height="64" rx="4"/>
-    {% unless tonneau %}
+    {% unless tonneau == true %}
       <path d="M48 248 H132 M48 264 H132 M48 280 H132" stroke-width="1.5"/>
     {% endunless %}
   {% else %}
@@ -302,7 +564,7 @@
 
   <!-- tailgate; drops past the tail when open -->
   <rect x="44" y="298" width="92" height="12" rx="3"/>
-  {% if tailgate %}<rect x="46" y="314" width="88" height="22" rx="4" fill="currentColor"/>{% endif %}
+  {% if tailgate == true %}<rect x="46" y="314" width="88" height="22" rx="4" fill="currentColor"/>{% endif %}
 </svg>
 {%- endcapture -%}
 
@@ -324,7 +586,8 @@
 {%- comment -%} ---------- partials ---------- {%- endcomment -%}
 
 {%- comment -%}
-  A labelled figure. `unit` renders smaller and tight against the value.
+  A labelled figure. `unit` renders smaller and tight against the value, and is
+  omitted when the value is unknown — "— mi" reads like a measurement.
 {%- endcomment -%}
 {% template stat %}
 <div class="flex flex--col flex--left gap--none">
@@ -337,11 +600,14 @@
 {% endtemplate %}
 
 {%- comment -%}
-  A health check. Passing checks stay quiet; failing ones invert so the eye
-  lands on them first.
+  A health check, in three states. Passing checks stay quiet; failing ones invert
+  so the eye lands on them first; and a check whose sensor never reported shows
+  an outlined "?" — visibly not a tick, visibly not an alarm.
 {%- endcomment -%}
 {% template check %}
-{% if ok %}
+{% if ok == nil %}
+  <span class="label label--small label--outline">?&nbsp;{{ label }}</span>
+{% elsif ok %}
   <span class="label label--small">&#10003;&nbsp;{{ label }}</span>
 {% else %}
   <span class="label label--small label--filled">&#10007;&nbsp;{{ label }}</span>

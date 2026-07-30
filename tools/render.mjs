@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, create
 import { createServer } from 'node:http';
 import { dirname, resolve, extname, normalize } from 'node:path';
 import { chromium } from 'playwright';
+import { loadSample } from './samples.mjs';
 
 const MARKUP_API = 'https://trmnl.com/api/markup';
 
@@ -113,7 +114,7 @@ if (!DEVICES[device]) throw new Error(`unknown device: ${device}`);
 const root = resolve(import.meta.dirname, '..');
 const shared = readFileSync(`${root}/src/shared.liquid`, 'utf8');
 const template = readFileSync(`${root}/src/${view}.liquid`, 'utf8');
-const variables = JSON.parse(readFileSync(`${root}/samples/${sample}.json`, 'utf8'));
+const variables = loadSample(sample);
 
 const rendered = await renderLiquid(shared + '\n' + template, variables);
 
