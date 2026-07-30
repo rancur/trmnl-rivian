@@ -1,0 +1,135 @@
+# Home Assistant package: push Rivian state to a TRMNL private plugin.
+#
+# Install:
+#   1. Copy this file to  <config>/packages/trmnl_rivian.yaml
+#   2. Make sure configuration.yaml has:
+#        homeassistant:
+#          packages: !include_dir_named packages
+#   3. Add to secrets.yaml:
+#        trmnl_webhook_url: "https://trmnl.com/api/custom_plugins/<your-uuid>"
+#   4. Set `vehicle` below to your vehicle's entity slug, then restart HA.
+#
+# Entity names come from the bretterer/home-assistant-rivian integration. If you
+# renamed your vehicle, the slug is whatever prefixes your Rivian entities —
+# check Developer Tools > States for `battery_state_of_charge`.
+
+rest_command:
+  trmnl_rivian_push:
+    url: !secret trmnl_webhook_url
+    method: post
+    content_type: "application/json"
+    payload: >-
+      {#- The one thing you need to change: -#}
+      {%- set vehicle = 'r1t' -%}
+
+      {%- set S = 'sensor.' ~ vehicle ~ '_' -%}
+      {%- set B = 'binary_sensor.' ~ vehicle ~ '_' -%}
+
+      {#- Closures, grouped the way the screen shows them. -#}
+      {%- set doors = {
+            'Front left':  B ~ 'door_front_left',
+            'Front right': B ~ 'door_front_right',
+            'Rear left':   B ~ 'door_rear_left',
+            'Rear right':  B ~ 'door_rear_right' } -%}
+      {%- set windows = {
+            'Front left':  B ~ 'window_front_left',
+            'Front right': B ~ 'window_front_right',
+            'Rear left':   B ~ 'window_rear_left',
+            'Rear right':  B ~ 'window_rear_right' } -%}
+      {%- set storage = {
+            'Frunk':       B ~ 'front_trunk',
+            'Tailgate':    B ~ 'tailgate',
+            'Liftgate':    B ~ 'liftgate',
+            'Tonneau':     B ~ 'tonneau',
+            'Gear tunnel L': B ~ 'gear_tunnel_left',
+            'Gear tunnel R': B ~ 'gear_tunnel_right' } -%}
+
+      {%- set ns = namespace(doors=[], windows=[], storage=[], tire=false) -%}
+      {%- for label, ent in doors.items() -%}
+        {%- if is_state(ent, 'on') -%}{%- set ns.doors = ns.doors + [label] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- for label, ent in windows.items() -%}
+        {%- if is_state(ent, 'on') -%}{%- set ns.windows = ns.windows + [label] -%}{%- endif -%}
+      {%- endfor -%}
+      {%- for label, ent in storage.items() -%}
+        {%- if is_state(ent, 'on') -%}{%- set ns.storage = ns.storage + [label] -%}{%- endif -%}
+      {%- endfor -%}
+
+      {#- Any corner reporting something other than a normal reading. -#}
+      {%- for corner in ['front_left', 'front_right', 'rear_left', 'rear_right'] -%}
+        {%- set st = states(S ~ 'tire_pressure_' ~ corner ~ '_status') | lower -%}
+        {%- if st not in ['ok', 'normal', 'nominal', 'unknown', 'unavailable', ''] -%}
+          {%- set ns.tire = true -%}
+        {%- endif -%}
+      {%- endfor -%}
+
+      {%- set range_ent = S ~ 'estimated_vehicle_range' -%}
+      {%- set odo_ent = S ~ 'odometer' -%}
+      {%- set temp_ent = S ~ 'cabin_temperature' -%}
+
+      {{
+        {
+          'merge_variables': {
+            'vehicle': state_attr('device_tracker.' ~ vehicle, 'friendly_name') | default('Rivian', true),
+            'soc': states(S ~ 'battery_state_of_charge') | float(0) | round(0) | int,
+            'soc_limit': states(S ~ 'battery_state_of_charge_limit') | float(80) | round(0) | int,
+            'range': states(range_ent) | float(0) | round(0) | int,
+            'distance_unit': state_attr(range_ent, 'unit_of_measurement') | default('mi', true),
+            'cabin_temp': states(temp_ent) | float(0) | round(0) | int,
+            'temp_unit': (state_attr(temp_ent, 'unit_of_measurement') | default('°F', true)) | replace('°', ''),
+            'odometer': states(odo_ent) | float(0) | round(0) | int,
+            'gear': states(S ~ 'gear_selector') | default('Park', true) | title,
+            'locked': is_state(B ~ 'locked_state', 'on'),
+            'plugged_in': is_state(B ~ 'charger_connection', 'on'),
+            'charging': is_state(B ~ 'charging_status', 'on'),
+            'charge_power': states(S ~ 'power') | float(0) | round(1),
+            'charge_eta_min': states(S ~ 'charging_time_remaining') | float(0) | round(0) | int,
+            'preconditioning': is_state(B ~ 'cabin_climate_preconditioning', 'on'),
+            'pet_mode': is_state(B ~ 'pet_mode', 'on'),
+            'tire_alert': ns.tire,
+            'doors_open': ns.doors,
+            'windows_open': ns.windows,
+            'storage_open': ns.storage,
+            'updated_at': now().strftime('%Y-%m-%dT%H:%M:%S%z')
+          }
+        } | to_json
+      }}
+
+automation:
+  # TRMNL accepts 12 webhooks/hour on the free tier (30 on TRMNL+), so this
+  # pushes on a 15-minute heartbeat plus meaningful changes, throttled to at
+  # most one push every 5 minutes.
+  - id: trmnl_rivian_push
+    alias: Rivian -> TRMNL
+    mode: single
+    max_exceeded: silent
+    trigger:
+      - platform: time_pattern
+        minutes: "/15"
+      - platform: state
+        entity_id:
+          - binary_sensor.r1t_locked_state
+          - binary_sensor.r1t_charging_status
+          - binary_sensor.r1t_charger_connection
+          - binary_sensor.r1t_door_front_left
+          - binary_sensor.r1t_door_front_right
+          - binary_sensor.r1t_door_rear_left
+          - binary_sensor.r1t_door_rear_right
+          - binary_sensor.r1t_window_front_left
+          - binary_sensor.r1t_window_front_right
+          - binary_sensor.r1t_window_rear_left
+          - binary_sensor.r1t_window_rear_right
+          - binary_sensor.r1t_front_trunk
+          - binary_sensor.r1t_tailgate
+          - binary_sensor.r1t_liftgate
+          - binary_sensor.r1t_tonneau
+          - binary_sensor.r1t_gear_tunnel_left
+          - binary_sensor.r1t_gear_tunnel_right
+        to: ~
+    condition:
+      - condition: template
+        value_template: >-
+          {{ this.attributes.last_triggered is none
+             or (now() - this.attributes.last_triggered).total_seconds() > 290 }}
+    action:
+      - service: rest_command.trmnl_rivian_push

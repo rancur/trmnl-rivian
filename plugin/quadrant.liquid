@@ -1,0 +1,39 @@
+<div class="layout layout--col layout--left gap--small">
+
+  <div class="flex flex--row flex--bottom flex--between w--full">
+    <div class="flex flex--col flex--left gap--none">
+      <span class="label label--small">State of charge</span>
+      <div class="flex flex--row flex--bottom gap--xsmall">
+        <span class="value value--xlarge value--tnums">{{ soc }}</span>
+        <span class="value value--xsmall">%</span>
+      </div>
+    </div>
+    {% render "stat", label: "Range", value: range, unit: distance_unit %}
+  </div>
+
+  <div class="progress-bar progress-bar--xsmall w--full">
+    <div class="track">
+      <div class="fill" style="width: {{ soc }}%"></div>
+    </div>
+  </div>
+
+  <div class="flex flex--row flex--center-y flex--between w--full">
+    <span class="label label--small">{{ mode }}</span>
+    {% if secure %}
+      <span class="label label--small">{{ cabin_display }}</span>
+    {% else %}
+      <span class="label label--small label--filled" data-clamp="1">
+        {%- unless locked -%}Unlocked{%- if open_count > 0 -%}&nbsp;&middot;&nbsp;{%- endif -%}{%- endunless -%}
+        {%- if open_count > 0 -%}
+          {%- if locked -%}{{ closure_summary }}{%- else -%}{{ open_count }} open{%- endif -%}
+        {%- endif -%}
+      </span>
+    {% endif %}
+  </div>
+
+</div>
+
+<div class="title_bar">
+  <img class="image" src="/images/plugins/trmnl--render.svg" />
+  <span class="title">{{ vehicle }}</span>
+</div>

@@ -1,0 +1,105 @@
+{%- comment -%}
+  Shared markup is prepended to every view before rendering, so this is where
+  derived values and reusable partials live. Keep it free of layout markup.
+{%- endcomment -%}
+
+<style>
+  /* Charge-limit tick on the progress track. The framework has no marker
+     primitive, so this is the one custom rule the plugin adds. */
+  .track { position: relative; }
+  .charge-limit {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    /* currentColor so the tick inverts with the framework in dark mode */
+    background: currentColor;
+  }
+</style>
+
+{%- comment -%} ---------- derived state ---------- {%- endcomment -%}
+
+{%- assign open = doors_open | concat: windows_open | concat: storage_open -%}
+{%- assign open_count = open | size -%}
+
+{%- if locked and open_count == 0 -%}
+  {%- assign secure = true -%}
+{%- else -%}
+  {%- assign secure = false -%}
+{%- endif -%}
+
+{%- comment -%} Headline mode, most specific first. {%- endcomment -%}
+{%- if charging -%}
+  {%- assign mode = "Charging" -%}
+{%- elsif plugged_in -%}
+  {%- assign mode = "Plugged in" -%}
+{%- elsif gear and gear != "Park" -%}
+  {%- assign mode = "Driving" -%}
+{%- else -%}
+  {%- assign mode = "Parked" -%}
+{%- endif -%}
+
+{%- comment -%} Worth calling out only when nothing is already replenishing it. {%- endcomment -%}
+{%- if soc <= 15 and charging == false -%}
+  {%- assign low_charge = true -%}
+{%- else -%}
+  {%- assign low_charge = false -%}
+{%- endif -%}
+
+{%- comment -%} Charge rate is only worth the pixels while current is flowing. {%- endcomment -%}
+{%- if charging and charge_power > 0 -%}
+  {%- assign mode_detail = mode | append: " &middot; " | append: charge_power | append: " kW" -%}
+{%- else -%}
+  {%- assign mode_detail = mode -%}
+{%- endif -%}
+
+{%- comment -%} Charge ETA as "1h 35m" / "45m". {%- endcomment -%}
+{%- assign eta_h = charge_eta_min | divided_by: 60 -%}
+{%- assign eta_m = charge_eta_min | modulo: 60 -%}
+{%- if eta_h > 0 -%}
+  {%- assign eta = eta_h | append: "h " | append: eta_m | append: "m" -%}
+{%- else -%}
+  {%- assign eta = eta_m | append: "m" -%}
+{%- endif -%}
+
+{%- comment -%} One-line closure digest for the smaller views. {%- endcomment -%}
+{%- if open_count == 0 -%}
+  {%- assign closure_summary = "All closed" -%}
+{%- else -%}
+  {%- assign closure_summary = open | join: ", " -%}
+{%- endif -%}
+
+{%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
+{%- assign odometer_fmt = odometer | number_with_delimiter -%}
+{%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
+
+{%- comment -%} ---------- partials ---------- {%- endcomment -%}
+
+{%- comment -%}
+  A labelled figure. `unit` renders smaller and tight against the value.
+{%- endcomment -%}
+{% template stat %}
+<div class="flex flex--col flex--left gap--none">
+  <span class="label label--small">{{ label }}</span>
+  <div class="flex flex--row flex--bottom gap--[3px]">
+    <span class="value value--small value--tnums">{{ value }}</span>
+    {% if unit %}<span class="label label--small">{{ unit }}</span>{% endif %}
+  </div>
+</div>
+{% endtemplate %}
+
+{%- comment -%}
+  One closure group. Reads "Closed" when nothing is open; names what is open
+  otherwise, inverted so an open truck is obvious from across the room.
+{%- endcomment -%}
+{% template closure %}
+<div class="flex flex--col flex--left gap--xsmall">
+  <span class="label label--small">{{ label }}</span>
+  {% assign count = items | size %}
+  {% if count > 0 %}
+    <span class="label label--filled" data-clamp="2">{{ items | join: ", " }}</span>
+  {% else %}
+    <span class="label label--gray">{{ empty_label | default: "Closed" }}</span>
+  {% endif %}
+</div>
+{% endtemplate %}
