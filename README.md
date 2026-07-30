@@ -649,6 +649,30 @@ matches a known-bad list. Neither treats a silent sensor as healthy.
 
 ---
 
+## Issues and contributions
+
+**GitHub is the support channel** — there is no email behind this, deliberately.
+Please open an issue for anything:
+
+- **Something reads wrong on your vehicle.** Especially valuable, because seven
+  values in the Home Assistant package were inferred from the integration's
+  source rather than observed on real hardware — see
+  [Step 5 of the deployment guide](docs/DEPLOYMENT.md#step-5--confirm-the-guesses).
+  If a tyre status, 12V health or service-mode reading does not match what your
+  vehicle actually reports, that is a bug worth filing with the raw value from
+  **Developer Tools → States**.
+- **A figure showing `0` when it should show `—`.** The whole design is that this
+  cannot happen. If you catch one, it is the most important kind of report.
+- **A different Rivian model.** The diagram covers R1T/R1S body styles; R2/R3
+  reports are welcome.
+- **Anything unclear in setup.** If you hit a step that assumed knowledge you did
+  not have, that is a documentation bug.
+
+Pull requests welcome. `npm run check` runs everything — lint, both test suites,
+all 48 renders and the build — and is the only thing a change has to pass. If you
+add a payload field, add it to the `NULLABLE` list in
+`tools/check_ha_template.py` so the generic no-data assertion covers it.
+
 ## Credits and licence
 
 - The Home Assistant integration this depends on is
