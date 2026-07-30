@@ -40,5 +40,10 @@
   "updated_at": "2026-07-30T14:32:00-0700",
   "location": "Home",
   "service_mode": false,
-  "driving": false
+  "driving": false,
+  "last_charge_start_soc": 0,
+  "last_charge_end_soc": 0,
+  "last_charge_kwh": 0,
+  "last_charge_at": "",
+  "moved_since_charge": true
 }

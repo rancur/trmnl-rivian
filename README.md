@@ -38,6 +38,7 @@ All four TRMNL sizes are implemented, so the plugin behaves in mashups:
 | **Status line** | What it is doing and where — "Charging at Home", "Driving", "In service" |
 | **Vehicle diagram** | Top-down schematic; panels open the way they actually open |
 | **Health row** | Locked, Closed, Tires, 12V, Fluids, Software — ticked or inverted |
+| **Last charge** | Once a session ends, what it added — as a caliper under the bar and a figure in kWh |
 | **Badges** | Low charge, preconditioning, pet mode |
 
 The title bar shows the name you gave the vehicle in the Rivian app, read from
@@ -194,6 +195,12 @@ The webhook posts a flat `merge_variables` object, ~800 bytes:
   "fluids_ok": true,
   "software_ok": true,
 
+  "last_charge_start_soc": 40,
+  "last_charge_end_soc": 80,
+  "last_charge_kwh": 45.0,
+  "last_charge_at": "2026-07-30T04:20:00-0700",
+  "moved_since_charge": false,
+
   "updated_at": "2026-07-30T14:32:00-0700"
 }
 ```
@@ -205,6 +212,11 @@ Liquid. `body_style` is `truck` or `suv`. Booleans ending in `_ok` are true when
 healthy, so a missing field never invents an alarm. `location` is a zone name
 from Home Assistant and is blank when the truck is somewhere unnamed — rename
 your zones and the screen follows.
+
+The last-charge block is only rendered when it still describes the charge in the
+battery: not charging now, and not driven since. `moved_since_charge` is decided
+by comparing the odometer against a snapshot taken when the session ended, so
+one drive retires it.
 
 Three optional fields, settable either in the payload or as plugin custom
 fields in TRMNL:
