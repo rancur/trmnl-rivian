@@ -5,7 +5,7 @@
 // matches what the real markup editor produces (custom filters included).
 // The page is then screenshotted in Chromium against the real plugins.css.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, createReadStream } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, createReadStream } from 'node:fs';
 import { createServer } from 'node:http';
 import { dirname, resolve, extname, normalize } from 'node:path';
 import { chromium } from 'playwright';
@@ -137,12 +137,26 @@ writeFileSync(resolve(vendor, '_preview.html'), html);
 const server = await serve(vendor);
 const origin = `http://127.0.0.1:${server.address().port}`;
 
-// The image ships its own Chromium build; don't depend on the version the
-// installed playwright package happens to expect. Everything is served from
-// loopback, so no proxy is involved.
-const browser = await chromium.launch({
-  executablePath: process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',
-});
+// Prefer whatever Playwright resolves for itself. Some sandboxes ship a
+// prebuilt Chromium whose version does not match the installed playwright
+// package, so fall back to that only when it is actually present — hardcoding
+// it would break every other machine.
+function chromiumPath() {
+  if (process.env.CHROMIUM_PATH) return process.env.CHROMIUM_PATH;
+  const root = process.env.PLAYWRIGHT_BROWSERS_PATH;
+  if (!root || !existsSync(root)) return undefined;
+  const build = readdirSync(root)
+    .filter((d) => /^chromium-\d+$/.test(d))
+    .sort()
+    .pop();
+  if (!build) return undefined;
+  const exe = resolve(root, build, 'chrome-linux', 'chrome');
+  return existsSync(exe) ? exe : undefined;
+}
+
+// Everything is served from loopback, so no proxy is involved.
+const executablePath = chromiumPath();
+const browser = await chromium.launch(executablePath ? { executablePath } : {});
 const ctx = await browser.newContext({
   viewport: { width: DEVICES[device].w, height: DEVICES[device].h },
   deviceScaleFactor: 1,
