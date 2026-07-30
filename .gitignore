@@ -1,0 +1,10 @@
+node_modules/
+
+# Mirrored TRMNL framework bundle (26 MB) — rebuild with tools/fetch-assets.mjs
+vendor/
+
+# Build output — rebuild with tools/build_plugin.py
+dist/
+
+# Intermediate render scaffolding; the .png next to it is the artifact
+preview/*.html

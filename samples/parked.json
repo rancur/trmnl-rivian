@@ -1,0 +1,23 @@
+{
+  "vehicle": "R1T",
+  "soc": 78,
+  "soc_limit": 80,
+  "range": 244,
+  "distance_unit": "mi",
+  "cabin_temp": 68,
+  "temp_unit": "F",
+  "odometer": 18432,
+  "gear": "Park",
+  "locked": true,
+  "plugged_in": false,
+  "charging": false,
+  "charge_power": 0,
+  "charge_eta_min": 0,
+  "preconditioning": false,
+  "pet_mode": false,
+  "tire_alert": false,
+  "doors_open": [],
+  "windows_open": [],
+  "storage_open": [],
+  "updated_at": "2026-07-30T08:05:00-07:00"
+}
