@@ -96,5 +96,5 @@
     {{ vehicle_mark }}
   {% endif %}
   <span class="title">{{ display_name }}</span>
-  <span class="instance">Updated {{ updated_fmt }}</span>
+  {% if updated_fmt != "" %}<span class="instance">Updated {{ updated_fmt }}</span>{% endif %}
 </div>

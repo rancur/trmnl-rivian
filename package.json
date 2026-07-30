@@ -2,16 +2,18 @@
   "name": "trmnl-rivian",
   "version": "1.0.0",
   "private": true,
-  "description": "A TRMNL private plugin showing Rivian state of charge, cabin temperature and closures, fed from Home Assistant",
+  "description": "A TRMNL private plugin showing Rivian state of charge, vehicle status and health, fed from Home Assistant",
   "type": "module",
   "license": "MIT",
   "scripts": {
     "setup": "node tools/fetch-assets.mjs",
     "preview": "node tools/render.mjs",
     "preview:all": "node tools/render-all.mjs",
-    "check:ha": "python3 tools/check_ha_template.py",
+    "test": "node tools/test_views.mjs",
+    "test:ha": "python3 tools/check_ha_template.py",
+    "lint:ha": "python3 tools/configure_ha.py --check",
     "build": "python3 tools/build_plugin.py",
-    "check": "npm run check:ha && npm run preview:all && npm run build"
+    "check": "npm run lint:ha && npm run test:ha && npm run test && npm run preview:all && npm run build"
   },
   "devDependencies": {
     "playwright": "^1.62.1"

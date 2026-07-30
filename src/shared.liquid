@@ -29,6 +29,45 @@
   }
 </style>
 
+{%- comment -%} ---------- defaults ----------
+
+  A view must never invent an alarm out of a field that simply is not there —
+  an incomplete payload should read as "nothing to report", not as a truck with
+  four flat tires and the doors unlocked.
+
+  Liquid's `default` filter is no use here: it treats `false` as blank, so
+  `false | default: true` returns true. Only an explicit `== nil` test can tell
+  "absent" from "genuinely false", so that is what is used throughout.
+
+{%- endcomment -%}
+
+{%- if locked == nil %}{% assign locked = true %}{% endif -%}
+{%- if tire_fl == nil %}{% assign tire_fl = true %}{% endif -%}
+{%- if tire_fr == nil %}{% assign tire_fr = true %}{% endif -%}
+{%- if tire_rl == nil %}{% assign tire_rl = true %}{% endif -%}
+{%- if tire_rr == nil %}{% assign tire_rr = true %}{% endif -%}
+{%- if battery_12v_ok == nil %}{% assign battery_12v_ok = true %}{% endif -%}
+{%- if fluids_ok == nil %}{% assign fluids_ok = true %}{% endif -%}
+{%- if software_ok == nil %}{% assign software_ok = true %}{% endif -%}
+
+{%- if charging == nil %}{% assign charging = false %}{% endif -%}
+{%- if plugged_in == nil %}{% assign plugged_in = false %}{% endif -%}
+{%- if driving == nil %}{% assign driving = false %}{% endif -%}
+{%- if service_mode == nil %}{% assign service_mode = false %}{% endif -%}
+{%- if preconditioning == nil %}{% assign preconditioning = false %}{% endif -%}
+{%- if pet_mode == nil %}{% assign pet_mode = false %}{% endif -%}
+
+{%- comment -%} No snapshot means nothing to report, so treat it as driven. {%- endcomment -%}
+{%- if moved_since_charge == nil %}{% assign moved_since_charge = true %}{% endif -%}
+{%- if last_charge_start_soc == nil %}{% assign last_charge_start_soc = 0 %}{% endif -%}
+{%- if last_charge_end_soc == nil %}{% assign last_charge_end_soc = 0 %}{% endif -%}
+
+{%- if soc == nil %}{% assign soc = 0 %}{% endif -%}
+{%- if soc_limit == nil %}{% assign soc_limit = 100 %}{% endif -%}
+{%- if charge_power == nil %}{% assign charge_power = 0 %}{% endif -%}
+{%- if charge_eta_min == nil %}{% assign charge_eta_min = 0 %}{% endif -%}
+{%- if body_style == nil %}{% assign body_style = "truck" %}{% endif -%}
+
 {%- comment -%} ---------- closures ---------- {%- endcomment -%}
 
 {%- comment -%}
@@ -178,7 +217,11 @@
 
 {%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
 {%- assign odometer_fmt = odometer | number_with_delimiter -%}
-{%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
+{%- if updated_at and updated_at != "" -%}
+  {%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
+{%- else -%}
+  {%- assign updated_fmt = "" -%}
+{%- endif -%}
 
 {%- comment -%}
   `vehicle_label` is the plugin's custom field, so a value set in TRMNL wins over
