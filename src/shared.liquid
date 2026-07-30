@@ -128,7 +128,12 @@
 {%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
 {%- assign odometer_fmt = odometer | number_with_delimiter -%}
 {%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
-{%- assign display_name = vehicle | default: model -%}
+{%- comment -%}
+  `vehicle_label` is the plugin's custom field, so a value set in TRMNL wins over
+  the name Home Assistant sends. Liquid's `default` treats "" as blank, so an
+  empty field falls through.
+{%- endcomment -%}
+{%- assign display_name = vehicle_label | default: vehicle | default: model -%}
 
 {%- comment -%} ---------- vehicle diagram ----------
 

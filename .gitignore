@@ -8,3 +8,6 @@ dist/
 
 # Intermediate render scaffolding; the .png next to it is the artifact
 preview/*.html
+
+# trmnlp build output
+_build/

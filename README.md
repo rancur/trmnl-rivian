@@ -40,32 +40,49 @@ All four TRMNL sizes are implemented, so the plugin behaves in mashups:
 | **Badges** | Low charge, preconditioning, pet mode |
 
 The title bar shows the name you gave the vehicle in the Rivian app, read from
-the Home Assistant device registry, and falls back to the model.
+the Home Assistant device registry, and falls back to the model. The plugin's
+**Vehicle Label** custom field overrides both if you want something else.
 
 ## Setup
 
 ### 1. Create the plugin in TRMNL
 
-Private plugins need the Developer add-on or a BYOD license.
+Private plugins need the Developer add-on or a BYOD license. The repo uses the
+[`trmnlp`](https://github.com/usetrmnl/trmnlp) project layout, so either route
+works.
 
-Build the archive and import it:
+**With trmnlp** — the official CLI, and the easier path if you plan to keep
+editing:
+
+```bash
+gem install trmnlp
+trmnlp login
+trmnlp push        # creates the plugin from src/
+```
+
+Run `trmnlp pull` once afterwards so `src/settings.yml` picks up an `id:`;
+without it every push creates a new plugin. `trmnlp serve` gives you a live
+local preview, and `trmnlp lint` runs the same checks TRMNL's reviewers use.
+
+**Without trmnlp** — build the archive and import it:
 
 ```bash
 python3 tools/build_plugin.py     # writes dist/trmnl-rivian.zip
 ```
 
-Then go to **Plugins → Private Plugin → Import**, upload `dist/trmnl-rivian.zip`,
-and save. Copy the **Webhook URL** from the plugin's settings — it looks like
-`https://trmnl.com/api/custom_plugins/<uuid>`.
+Go to **Plugins → Private Plugin → Import** and upload `dist/trmnl-rivian.zip`.
+
+Either way, copy the **Webhook URL** from the plugin's settings afterwards — it
+looks like `https://trmnl.com/api/custom_plugins/<uuid>`.
 
 <details>
-<summary>Prefer to set it up by hand?</summary>
+<summary>Prefer to paste it in by hand?</summary>
 
 Create a Private Plugin with strategy **Webhook**, then paste
-`plugin/shared.liquid` into the **Shared** tab and each `plugin/<size>.liquid`
-into its matching view tab. The build script exists only because the importer
-has no slot for shared markup — it prepends `shared.liquid` to each view, which
-is exactly what TRMNL does with the Shared tab at render time.
+`src/shared.liquid` into the **Shared** tab and each `src/<size>.liquid` into its
+matching view tab. The build script exists only because the ZIP importer has no
+slot for shared markup — it prepends `shared.liquid` to each view, which is
+exactly what TRMNL does with the Shared tab at render time.
 
 </details>
 
@@ -179,8 +196,10 @@ needs to know *which* panel to fill; the human-readable lists are derived in
 Liquid. `body_style` is `truck` or `suv`. Booleans ending in `_ok` are true when
 healthy, so a missing field never invents an alarm.
 
-Two optional fields:
+Three optional fields, settable either in the payload or as plugin custom
+fields in TRMNL:
 
+- `vehicle_label` — overrides the title bar name.
 - `logo_url` — replaces the title bar mark with an image of your choosing.
 - `vehicle_image_url` — replaces the diagram with a dithered photo. TRMNL renders
   server-side, so this must be a URL TRMNL's renderer can reach; Home Assistant's
@@ -189,6 +208,10 @@ Two optional fields:
   diagram is for.
 
 ## Local development
+
+Two harnesses, for different jobs. `trmnlp serve` is the official live preview —
+edit `src/` and the browser reloads. The scripts here render the exact device
+bitmap and check the Home Assistant side, which `trmnlp` does not cover:
 
 ```bash
 npm install
@@ -221,6 +244,11 @@ render like any other sample.
 
 ## Notes for anyone editing this
 
+**Layout.** `src/` holds the plugin itself and follows the `trmnlp` convention:
+one `.liquid` per view size, plus `shared.liquid` and `settings.yml`. Everything
+else — `tools/`, `samples/`, `homeassistant/` — is this repo's own scaffolding
+and is ignored by `trmnlp push`.
+
 **The framework.** The plugin sticks to TRMNL primitives — `value`, `label`,
 `progress-bar`, `divider`, `grid`, `flex` — plus one custom CSS rule for the
 charge-limit tick, which has no framework equivalent. It uses `currentColor` so
@@ -234,7 +262,7 @@ it inverts correctly in dark mode. Things that cost real debugging time:
   returns an empty array. Lists are built as delimited strings and `split` at the
   end.
 - `{% capture %}` emits raw HTML, which is how the SVG diagram is built once in
-  `shared.liquid` and reused by every view.
+  `src/shared.liquid` and reused by every view.
 - `✓` (`&#10003;`) and `✗` (`&#10007;`) render in every framework font,
   including the pixel ones. Most decorative glyphs do not — test before relying
   on one.
