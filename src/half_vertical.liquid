@@ -16,7 +16,7 @@
       </div>
     </div>
     <div class="flex flex--row flex--between w--full">
-      <span class="label label--small">{% if charging and charge_power > 0 %}{{ charge_power }} kW &middot; {{ eta }}{% endif %}</span>
+      <span class="label label--small">{%- if charging and charge_power > 0 -%}{{ charge_power }} kW &middot; {{ eta }}{%- elsif show_last_charge -%}Last charge +{{ last_charge_delta }}% &middot; {{ last_charge_kwh }} kWh{%- endif -%}</span>
       <span class="label label--small">Limit {{ soc_limit }}%</span>
     </div>
   </div>

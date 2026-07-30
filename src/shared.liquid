@@ -15,6 +15,18 @@
     /* currentColor so the tick inverts with the framework in dark mode */
     background: currentColor;
   }
+
+  /* Caliper under the track spanning what the last charge session added.
+     Lives outside .track because that clips its overflow. */
+  .charge-session {
+    position: absolute;
+    top: 0;
+    height: 6px;
+    box-sizing: border-box;
+    border-left: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+  }
 </style>
 
 {%- comment -%} ---------- closures ---------- {%- endcomment -%}
@@ -137,6 +149,23 @@
 {%- else -%}
   {%- assign mode_detail = mode -%}
 {%- endif -%}
+
+{%- comment -%} ---------- last charge session ----------
+
+  Plenty of people charge on a timer or a cheap-rate window, so once a session
+  ends the useful question is "how much did it actually put in?". Shown only
+  while the answer still describes the charge in the battery: not charging now,
+  and not driven since. One drive and it is history, so it disappears.
+
+{%- endcomment -%}
+
+{%- assign last_charge_delta = last_charge_end_soc | minus: last_charge_start_soc -%}
+{%- if charging == false and moved_since_charge == false and last_charge_delta > 0 -%}
+  {%- assign show_last_charge = true -%}
+{%- else -%}
+  {%- assign show_last_charge = false -%}
+{%- endif -%}
+{%- assign last_charge_fmt = last_charge_at | date: "%a %-I%p" -%}
 
 {%- comment -%} Charge ETA as "1h 35m" / "45m". {%- endcomment -%}
 {%- assign eta_h = charge_eta_min | divided_by: 60 -%}

@@ -21,6 +21,44 @@
 # not count as a change.
 
 template:
+  # --- last charge session ---------------------------------------------------
+  # The integration's session sensors describe the *current* charge and may go
+  # away once it ends, so the summary is frozen here as it finishes. These two
+  # are trigger-based, which means Home Assistant restores them across restarts.
+  #
+  # NOTE: trigger entity_ids must be literal, so the `r1t` below cannot use the
+  # `vehicle` variable. Change it here too.
+
+  - trigger:
+      - platform: state
+        entity_id: binary_sensor.r1t_charging_status
+        from: "off"
+        to: "on"
+    sensor:
+      - name: Rivian Charge Start SOC
+        unique_id: rivian_charge_start_soc
+        unit_of_measurement: "%"
+        state: "{{ states('sensor.r1t_battery_state_of_charge') | float(0) | round(0) }}"
+
+  - trigger:
+      - platform: state
+        entity_id: binary_sensor.r1t_charging_status
+        from: "on"
+        to: "off"
+    sensor:
+      - name: Rivian Last Charge
+        unique_id: rivian_last_charge
+        icon: mdi:battery-charging-100
+        state: "{{ now().strftime('%Y-%m-%dT%H:%M:%S%z') }}"
+        attributes:
+          start_soc: "{{ states('sensor.rivian_charge_start_soc') | float(0) | round(0) | int }}"
+          end_soc: "{{ states('sensor.r1t_battery_state_of_charge') | float(0) | round(0) | int }}"
+          kwh: "{{ states('sensor.r1t_charging_energy_delivered') | float(0) | round(1) }}"
+          # Odometer at the end of the charge, so we can tell later whether the
+          # truck has been driven since.
+          odometer: "{{ states('sensor.r1t_odometer') | float(0) | round(0) | int }}"
+
+  # --- payload ---------------------------------------------------------------
   - sensor:
       - name: Rivian TRMNL Payload
         unique_id: rivian_trmnl_payload
@@ -102,6 +140,19 @@ template:
             {%- set batt12_ok = states(S ~ 'twelve_volt_battery_health') | lower
                                 not in ['poor', 'bad', 'low', 'fault', 'faulty', 'degraded', 'failed'] -%}
 
+            {#- Last charge summary, frozen when the session ended. `moved` is
+                odometer-based: if the truck has been driven since, the summary
+                no longer describes the charge that is in the battery. A missing
+                snapshot reads as moved, which hides the panel. -#}
+            {%- set lc = 'sensor.rivian_last_charge' -%}
+            {%- set lc_odo = state_attr(lc, 'odometer') | int(0) -%}
+            {%- set odo_now = states(odo_ent) | float(0) | round(0) | int -%}
+            {%- set moved = (lc_odo == 0) or (odo_now > lc_odo) -%}
+            {%- set lc_at = states(lc) -%}
+            {%- if lc_at in ['unknown', 'unavailable', 'none', ''] -%}
+              {%- set lc_at = '' -%}
+            {%- endif -%}
+
             {#- Freshness is the newest change among the values on screen, not
                 the time of this render — using now() here would make every push
                 look like new data and force a needless e-ink redraw. -#}
@@ -141,7 +192,7 @@ template:
                   'locked': locked,
                   'plugged_in': is_state(B ~ 'charger_connection', 'on'),
                   'charging': is_state(B ~ 'charging_status', 'on'),
-                  'charge_power': states(S ~ 'power') | float(0) | round(0) | int,
+                  'charge_power': states(S ~ 'charging_speed') | float(0) | round(0) | int,
                   'charge_eta_min': ((states(S ~ 'charging_time_remaining') | float(0) / 5) | round(0) | int) * 5,
                   'preconditioning': is_state(B ~ 'cabin_climate_preconditioning', 'on'),
                   'pet_mode': is_state(B ~ 'pet_mode', 'on'),
@@ -167,6 +218,12 @@ template:
                   'battery_12v_ok': batt12_ok,
                   'fluids_ok': fluids_ok,
                   'software_ok': software_ok,
+
+                  'last_charge_start_soc': state_attr(lc, 'start_soc') | int(0),
+                  'last_charge_end_soc': state_attr(lc, 'end_soc') | int(0),
+                  'last_charge_kwh': state_attr(lc, 'kwh') | float(0) | round(1),
+                  'last_charge_at': lc_at,
+                  'moved_since_charge': moved,
 
                   'updated_at': updated
                 }

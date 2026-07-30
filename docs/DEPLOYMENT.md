@@ -15,8 +15,8 @@ agent — with access to the real accounts.
 | | |
 |---|---|
 | Liquid markup for all four view sizes | ✅ verified by rendering against TRMNL's own `/api/markup` |
-| Pixel-accurate previews at 800×480 | ✅ 28 renders, light and dark, in `preview/` |
-| Home Assistant payload template | ✅ 16 assertions pass against a stubbed entity table |
+| Pixel-accurate previews at 800×480 | ✅ 32 renders, light and dark, in `preview/` |
+| Home Assistant payload template | ✅ 20 assertions pass against a stubbed entity table |
 | Plugin definition (`src/settings.yml`) | ✅ written, ❌ never uploaded |
 | Importable archive (`dist/trmnl-rivian.zip`) | ✅ builds, ❌ never imported |
 | Anything touching a real account | ❌ **all of this is unverified** |
@@ -119,8 +119,9 @@ trmnl_webhook_url: "https://trmnl.com/api/custom_plugins/<uuid>"
 ```
 
 Edit `packages/trmnl_rivian.yaml` and replace `r1t` with your slug. **It appears
-twice**, both near the top — once in `state:` and once in `payload:`. Restart
-Home Assistant.
+9 times** — `grep -c r1t` to confirm you got them all. Most are inside the two
+trigger-based sensors at the top, whose `entity_id:` fields must be literal and
+so cannot use the `vehicle` variable. Restart Home Assistant.
 
 **Verify, in order:**
 
@@ -138,12 +139,19 @@ Home Assistant.
 3. Force Refresh in TRMNL. The screen should now show your truck.
 4. Open a door. Within ~5 minutes the automation should fire on its own and the
    door should appear open on screen at the next device refresh.
+5. **The last-charge panel needs one real charge session to appear.** It is
+   populated by two trigger-based sensors that fire on the charging status
+   going on and then off, so it stays empty until the truck has charged once
+   with this package installed. After a session, check
+   `sensor.rivian_last_charge` has `start_soc`, `end_soc`, `kwh` and `odometer`
+   attributes, then confirm the caliper appears under the bar. Drive the truck
+   and it should disappear.
 
 ---
 
 ## Step 4 — Confirm the guesses
 
-Six values were inferred from source code, not observed. Each is written to fail
+Seven values were inferred from source code, not observed. Each is written to fail
 safe — an unrecognised reading shows "healthy" rather than crying wolf — so a
 wrong guess is quiet, not loud. **Check each one and correct the package.**
 
@@ -153,7 +161,8 @@ wrong guess is quiet, not loud. **Check each one and correct the package.**
 | 12V battery health | `batt12_ok` | Read `sensor.<slug>_twelve_volt_battery_health`. Confirm a healthy truck reports something not in the bad-values list. |
 | Brake fluid | `brake_low` | Read `sensor.<slug>_brake_fluid_level_low`. The template expects a truthy string (`true`/`on`/`yes`/`1`). |
 | Service mode | `service_mode` | Read `sensor.<slug>_service_mode`. Same truthy-string assumption. |
-| **Charge power** | `charge_power` | **Most likely to be wrong.** `sensor.<slug>_power` may not exist on the vehicle device — in the integration source, `power` sits with the wallbox sensors. If it is missing, charge rate silently shows as 0 and the "11 kW ·" prefix disappears. Find the real entity and point at it. |
+| Charge power | `charge_power` | Reads `sensor.<slug>_charging_speed`, the session power sensor. (An earlier draft used `sensor.<slug>_power`, which belongs to the wallbox, not the vehicle.) If charge rate shows 0 while plugged in, this is the entity to check. |
+| Charge energy | last-charge snapshot | Reads `sensor.<slug>_charging_energy_delivered`. Confirm it reports kWh during a session. |
 | Zone names | `location` | Park at home and confirm `device_tracker.<slug>_location` reports `home`. Named zones flow straight through to the screen, so rename zones in HA to change what it says. |
 
 ---

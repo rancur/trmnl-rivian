@@ -32,7 +32,8 @@ STATES = {
     "sensor.r1t_gear_selector": ("park", {}),
     "sensor.r1t_power_state": ("Ready", {}),
     "sensor.r1t_service_mode": ("false", {}),
-    "sensor.r1t_power": ("11.24", {"unit_of_measurement": "kW"}),
+    "sensor.r1t_charging_speed": ("11.24", {"unit_of_measurement": "kW"}),
+    "sensor.r1t_charging_energy_delivered": ("44.83", {"unit_of_measurement": "kWh"}),
     "sensor.r1t_charging_time_remaining": ("97", {"unit_of_measurement": "min"}),
     "sensor.r1t_tire_pressure_front_left_status": ("OK", {}),
     "sensor.r1t_tire_pressure_front_right_status": ("OK", {}),
@@ -51,6 +52,12 @@ STATES = {
     "binary_sensor.r1t_window_front_left": ("on", {}),
     "binary_sensor.r1t_tailgate": ("on", {}),
     "device_tracker.r1t_location": ("home", {}),
+    # Frozen when the last session ended; the truck has not been driven since
+    # (odometer matches), so the last-charge caliper should show.
+    "sensor.rivian_last_charge": (
+        "2026-07-30T04:20:00-0700",
+        {"start_soc": 39, "end_soc": 80, "kwh": 44.8, "odometer": 18433},
+    ),
 }
 
 DEVICE = {"name": "R1T", "name_by_user": "Gluten Free Grocery Getter", "model": "R1T"}
@@ -99,7 +106,20 @@ LenientLoader.add_multi_constructor("!", lambda loader, suffix, node: f"<{suffix
 def main():
     path = ROOT / "homeassistant" / "trmnl_rivian.yaml"
     config = yaml.load(path.read_text(), Loader=LenientLoader)
-    template = config["template"][0]["sensor"][0]["attributes"]["payload"]
+    # The package has several template blocks; find the one holding the payload
+    # rather than depending on its position.
+    template = next(
+        (
+            sensor["attributes"]["payload"]
+            for block in config["template"]
+            for sensor in block.get("sensor", [])
+            if "payload" in sensor.get("attributes", {})
+        ),
+        None,
+    )
+    if template is None:
+        print("no template sensor exposes a `payload` attribute")
+        return 1
 
     env = Environment()
     env.filters["to_json"] = json.dumps
@@ -136,6 +156,8 @@ def main():
         "distance_unit", "cabin_temp", "temp_unit", "odometer", "gear", "locked",
         "plugged_in", "charging", "charge_power", "charge_eta_min",
         "preconditioning", "pet_mode", "location", "driving", "service_mode",
+        "last_charge_start_soc", "last_charge_end_soc", "last_charge_kwh",
+        "last_charge_at", "moved_since_charge",
         "door_fl", "door_fr", "door_rl", "door_rr",
         "win_fl", "win_fr", "win_rl", "win_rr",
         "frunk", "tonneau", "tailgate", "tunnel_l", "tunnel_r",
@@ -165,6 +187,10 @@ def main():
         "location": "Home",    # device_tracker 'home' zone
         "driving": False,      # power_state Ready, gear park
         "service_mode": False,
+        "last_charge_start_soc": 39,
+        "last_charge_end_soc": 80,
+        "last_charge_kwh": 44.8,
+        "moved_since_charge": False,  # odometer 18433 rounded == snapshot
     }
     failures = [
         f"  {k}: expected {v!r}, got {merge.get(k)!r}"

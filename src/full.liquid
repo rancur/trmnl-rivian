@@ -24,9 +24,20 @@
         </div>
       </div>
 
+      {% if show_last_charge %}
+        <div class="w--full" style="position: relative; height: 7px">
+          <div class="charge-session"
+               style="left: {{ last_charge_start_soc }}%; width: {{ last_charge_delta }}%"></div>
+        </div>
+      {% endif %}
+
       <div class="flex flex--row flex--center-y flex--between w--full">
         <span class="label label--small">
-          {%- if charging and charge_power > 0 %}{{ charge_power }} kW &middot; {{ eta }} to limit{% endif -%}
+          {%- if charging and charge_power > 0 -%}
+            {{ charge_power }} kW &middot; {{ eta }} to limit
+          {%- elsif show_last_charge -%}
+            Last charge +{{ last_charge_delta }}% &middot; {{ last_charge_kwh }} kWh &middot; {{ last_charge_fmt }}
+          {%- endif -%}
         </span>
         <span class="label label--small">Limit {{ soc_limit }}%</span>
       </div>
