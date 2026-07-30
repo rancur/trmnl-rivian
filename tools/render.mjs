@@ -104,7 +104,10 @@ const device = arg('device', 'og');
 const dark = process.argv.includes('--dark');
 const out = arg('out', `preview/${view}-${sample}.png`);
 
-if (!VIEWS[view]) throw new Error(`unknown view: ${view}`);
+// A scratch template can be rendered by naming the wrapper explicitly.
+const size = arg('size', VIEWS[view] ? view : 'full');
+
+if (!VIEWS[size]) throw new Error(`unknown view size: ${size}`);
 if (!DEVICES[device]) throw new Error(`unknown device: ${device}`);
 
 const root = resolve(import.meta.dirname, '..');
@@ -127,7 +130,7 @@ if (!existsSync(vendor)) {
   process.exit(1);
 }
 
-const html = page({ body: VIEWS[view](rendered), device, dark });
+const html = page({ body: VIEWS[size](rendered), device, dark });
 mkdirSync(dirname(resolve(root, out)), { recursive: true });
 writeFileSync(resolve(vendor, '_preview.html'), html);
 

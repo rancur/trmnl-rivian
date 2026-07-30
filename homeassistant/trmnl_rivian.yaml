@@ -9,127 +9,178 @@
 #        trmnl_webhook_url: "https://trmnl.com/api/custom_plugins/<your-uuid>"
 #   4. Set `vehicle` below to your vehicle's entity slug, then restart HA.
 #
-# Entity names come from the bretterer/home-assistant-rivian integration. If you
-# renamed your vehicle, the slug is whatever prefixes your Rivian entities —
-# check Developer Tools > States for `battery_state_of_charge`.
+# Entity names come from the bretterer/home-assistant-rivian integration. The
+# slug is whatever prefixes your Rivian entities — check Developer Tools > States
+# for `battery_state_of_charge`.
+#
+# How the push is triggered: the template sensor below re-renders only when one
+# of the entities it reads actually changes, so its `payload` attribute is a
+# content fingerprint. The automation fires on that attribute changing, which
+# means a webhook goes out when the truck's state changes and not otherwise.
+# Noisy values are quantised so a charger drifting between 11.2 and 11.4 kW does
+# not count as a change.
+
+template:
+  - sensor:
+      - name: Rivian TRMNL Payload
+        unique_id: rivian_trmnl_payload
+        icon: mdi:car-electric
+        # Short, human-readable state; the real content is in `payload`.
+        state: >-
+          {%- set vehicle = 'r1t' -%}
+          {{ states('sensor.' ~ vehicle ~ '_battery_state_of_charge') }}%
+        attributes:
+          payload: >-
+            {#- The one thing you need to change: -#}
+            {%- set vehicle = 'r1t' -%}
+
+            {%- set S = 'sensor.' ~ vehicle ~ '_' -%}
+            {%- set B = 'binary_sensor.' ~ vehicle ~ '_' -%}
+
+            {%- set soc_ent = S ~ 'battery_state_of_charge' -%}
+            {%- set range_ent = S ~ 'estimated_vehicle_range' -%}
+            {%- set temp_ent = S ~ 'cabin_temperature' -%}
+            {%- set odo_ent = S ~ 'odometer' -%}
+
+            {#- Name and model come from the device registry, so the screen shows
+                whatever you named the vehicle in the Rivian app. -#}
+            {%- set dev = device_id(soc_ent) -%}
+            {%- set model = device_attr(dev, 'model') | default('', true) -%}
+            {%- set name = device_attr(dev, 'name_by_user')
+                           or device_attr(dev, 'name')
+                           or model | default('Rivian', true) -%}
+
+            {#- R1T/R2T have a bed and gear tunnel; R1S/R3 do not. -#}
+            {%- if 'T' in model.upper().replace('RIVIAN', '') -%}
+              {%- set body_style = 'truck' -%}
+            {%- else -%}
+              {%- set body_style = 'suv' -%}
+            {%- endif -%}
+
+            {#- `locked_state` is a LOCK binary sensor: 'on' means UNLOCKED.
+                Anything else (including unavailable) is treated as locked so a
+                dropped connection does not raise a false alarm. -#}
+            {%- set locked = not is_state(B ~ 'locked_state', 'on') -%}
+
+            {#- Tyre status vocabulary is not documented; anything outside this
+                known-good list is surfaced. Widen it if you see false alarms. -#}
+            {%- set tyre_ok_values = ['ok', 'normal', 'nominal', 'unknown', 'unavailable', ''] -%}
+            {%- set ns = namespace(tires={}) -%}
+            {%- for corner in ['front_left', 'front_right', 'rear_left', 'rear_right'] -%}
+              {%- set st = states(S ~ 'tire_pressure_' ~ corner ~ '_status') | lower -%}
+              {%- set ns.tires = dict(ns.tires, **{corner: st in tyre_ok_values}) -%}
+            {%- endfor -%}
+
+            {#- Fluids: wiper level is a PROBLEM binary sensor (on = not normal);
+                brake fluid reports a truthy string when low. -#}
+            {%- set brake_low = states(S ~ 'brake_fluid_level_low') | lower in ['true', 'on', 'yes', '1'] -%}
+            {%- set fluids_ok = not (brake_low or is_state(B ~ 'wiper_fluid_level', 'on')) -%}
+
+            {#- Software is "ok" when there is nothing waiting to install. -#}
+            {%- set cur = states(S ~ 'software_ota_current_version') -%}
+            {%- set avail = states(S ~ 'software_ota_available_version') -%}
+            {%- set software_ok = (avail in ['unknown', 'unavailable', '', 'None']) or (cur == avail) -%}
+
+            {%- set batt12_ok = states(S ~ 'twelve_volt_battery_health') | lower
+                                not in ['poor', 'bad', 'low', 'fault', 'faulty', 'degraded', 'failed'] -%}
+
+            {#- Freshness is the newest change among the values on screen, not
+                the time of this render — using now() here would make every push
+                look like new data and force a needless e-ink redraw. -#}
+            {%- set watched = [soc_ent, range_ent, temp_ent, odo_ent,
+                               B ~ 'locked_state', B ~ 'charging_status',
+                               B ~ 'charger_connection'] -%}
+            {%- set ns2 = namespace(latest=None) -%}
+            {%- for e in watched -%}
+              {%- set st = states[e] -%}
+              {%- if st is not none and (ns2.latest is none or st.last_changed > ns2.latest) -%}
+                {%- set ns2.latest = st.last_changed -%}
+              {%- endif -%}
+            {%- endfor -%}
+            {%- set updated = (ns2.latest | as_local).strftime('%Y-%m-%dT%H:%M:%S%z')
+                              if ns2.latest else '' -%}
+
+            {{
+              {
+                'merge_variables': {
+                  'vehicle': name,
+                  'model': model,
+                  'body_style': body_style,
+
+                  'soc': states(soc_ent) | float(0) | round(0) | int,
+                  'soc_limit': states(S ~ 'battery_state_of_charge_limit') | float(80) | round(0) | int,
+                  'range': states(range_ent) | float(0) | round(0) | int,
+                  'distance_unit': state_attr(range_ent, 'unit_of_measurement') | default('mi', true),
+                  'cabin_temp': states(temp_ent) | float(0) | round(0) | int,
+                  'temp_unit': (state_attr(temp_ent, 'unit_of_measurement') | default('°F', true)) | replace('°', ''),
+                  'odometer': states(odo_ent) | float(0) | round(0) | int,
+                  'gear': states(S ~ 'gear_selector') | default('Park', true) | title,
+
+                  'locked': locked,
+                  'plugged_in': is_state(B ~ 'charger_connection', 'on'),
+                  'charging': is_state(B ~ 'charging_status', 'on'),
+                  'charge_power': states(S ~ 'power') | float(0) | round(0) | int,
+                  'charge_eta_min': ((states(S ~ 'charging_time_remaining') | float(0) / 5) | round(0) | int) * 5,
+                  'preconditioning': is_state(B ~ 'cabin_climate_preconditioning', 'on'),
+                  'pet_mode': is_state(B ~ 'pet_mode', 'on'),
+
+                  'door_fl': is_state(B ~ 'door_front_left', 'on'),
+                  'door_fr': is_state(B ~ 'door_front_right', 'on'),
+                  'door_rl': is_state(B ~ 'door_rear_left', 'on'),
+                  'door_rr': is_state(B ~ 'door_rear_right', 'on'),
+                  'win_fl': is_state(B ~ 'window_front_left', 'on'),
+                  'win_fr': is_state(B ~ 'window_front_right', 'on'),
+                  'win_rl': is_state(B ~ 'window_rear_left', 'on'),
+                  'win_rr': is_state(B ~ 'window_rear_right', 'on'),
+                  'frunk': is_state(B ~ 'front_trunk', 'on'),
+                  'tonneau': is_state(B ~ 'tonneau', 'on'),
+                  'tailgate': is_state(B ~ 'tailgate', 'on') or is_state(B ~ 'liftgate', 'on'),
+                  'tunnel_l': is_state(B ~ 'gear_tunnel_left', 'on'),
+                  'tunnel_r': is_state(B ~ 'gear_tunnel_right', 'on'),
+
+                  'tire_fl': ns.tires['front_left'],
+                  'tire_fr': ns.tires['front_right'],
+                  'tire_rl': ns.tires['rear_left'],
+                  'tire_rr': ns.tires['rear_right'],
+                  'battery_12v_ok': batt12_ok,
+                  'fluids_ok': fluids_ok,
+                  'software_ok': software_ok,
+
+                  'updated_at': updated
+                }
+              } | to_json
+            }}
 
 rest_command:
   trmnl_rivian_push:
     url: !secret trmnl_webhook_url
     method: post
     content_type: "application/json"
-    payload: >-
-      {#- The one thing you need to change: -#}
-      {%- set vehicle = 'r1t' -%}
-
-      {%- set S = 'sensor.' ~ vehicle ~ '_' -%}
-      {%- set B = 'binary_sensor.' ~ vehicle ~ '_' -%}
-
-      {#- Closures, grouped the way the screen shows them. -#}
-      {%- set doors = {
-            'Front left':  B ~ 'door_front_left',
-            'Front right': B ~ 'door_front_right',
-            'Rear left':   B ~ 'door_rear_left',
-            'Rear right':  B ~ 'door_rear_right' } -%}
-      {%- set windows = {
-            'Front left':  B ~ 'window_front_left',
-            'Front right': B ~ 'window_front_right',
-            'Rear left':   B ~ 'window_rear_left',
-            'Rear right':  B ~ 'window_rear_right' } -%}
-      {%- set storage = {
-            'Frunk':       B ~ 'front_trunk',
-            'Tailgate':    B ~ 'tailgate',
-            'Liftgate':    B ~ 'liftgate',
-            'Tonneau':     B ~ 'tonneau',
-            'Gear tunnel L': B ~ 'gear_tunnel_left',
-            'Gear tunnel R': B ~ 'gear_tunnel_right' } -%}
-
-      {%- set ns = namespace(doors=[], windows=[], storage=[], tire=false) -%}
-      {%- for label, ent in doors.items() -%}
-        {%- if is_state(ent, 'on') -%}{%- set ns.doors = ns.doors + [label] -%}{%- endif -%}
-      {%- endfor -%}
-      {%- for label, ent in windows.items() -%}
-        {%- if is_state(ent, 'on') -%}{%- set ns.windows = ns.windows + [label] -%}{%- endif -%}
-      {%- endfor -%}
-      {%- for label, ent in storage.items() -%}
-        {%- if is_state(ent, 'on') -%}{%- set ns.storage = ns.storage + [label] -%}{%- endif -%}
-      {%- endfor -%}
-
-      {#- Any corner reporting something other than a normal reading. -#}
-      {%- for corner in ['front_left', 'front_right', 'rear_left', 'rear_right'] -%}
-        {%- set st = states(S ~ 'tire_pressure_' ~ corner ~ '_status') | lower -%}
-        {%- if st not in ['ok', 'normal', 'nominal', 'unknown', 'unavailable', ''] -%}
-          {%- set ns.tire = true -%}
-        {%- endif -%}
-      {%- endfor -%}
-
-      {%- set range_ent = S ~ 'estimated_vehicle_range' -%}
-      {%- set odo_ent = S ~ 'odometer' -%}
-      {%- set temp_ent = S ~ 'cabin_temperature' -%}
-
-      {{
-        {
-          'merge_variables': {
-            'vehicle': state_attr('device_tracker.' ~ vehicle, 'friendly_name') | default('Rivian', true),
-            'soc': states(S ~ 'battery_state_of_charge') | float(0) | round(0) | int,
-            'soc_limit': states(S ~ 'battery_state_of_charge_limit') | float(80) | round(0) | int,
-            'range': states(range_ent) | float(0) | round(0) | int,
-            'distance_unit': state_attr(range_ent, 'unit_of_measurement') | default('mi', true),
-            'cabin_temp': states(temp_ent) | float(0) | round(0) | int,
-            'temp_unit': (state_attr(temp_ent, 'unit_of_measurement') | default('°F', true)) | replace('°', ''),
-            'odometer': states(odo_ent) | float(0) | round(0) | int,
-            'gear': states(S ~ 'gear_selector') | default('Park', true) | title,
-            'locked': is_state(B ~ 'locked_state', 'on'),
-            'plugged_in': is_state(B ~ 'charger_connection', 'on'),
-            'charging': is_state(B ~ 'charging_status', 'on'),
-            'charge_power': states(S ~ 'power') | float(0) | round(1),
-            'charge_eta_min': states(S ~ 'charging_time_remaining') | float(0) | round(0) | int,
-            'preconditioning': is_state(B ~ 'cabin_climate_preconditioning', 'on'),
-            'pet_mode': is_state(B ~ 'pet_mode', 'on'),
-            'tire_alert': ns.tire,
-            'doors_open': ns.doors,
-            'windows_open': ns.windows,
-            'storage_open': ns.storage,
-            'updated_at': now().strftime('%Y-%m-%dT%H:%M:%S%z')
-          }
-        } | to_json
-      }}
+    payload: "{{ body }}"
 
 automation:
-  # TRMNL accepts 12 webhooks/hour on the free tier (30 on TRMNL+), so this
-  # pushes on a 15-minute heartbeat plus meaningful changes, throttled to at
-  # most one push every 5 minutes.
+  # Fires when the payload's content changes. The time pattern is only a
+  # heartbeat in case a webhook is ever dropped. TRMNL accepts 12 webhooks/hour
+  # (30 on TRMNL+), so pushes are throttled to at most one every 5 minutes.
   - id: trmnl_rivian_push
     alias: Rivian -> TRMNL
     mode: single
     max_exceeded: silent
     trigger:
-      - platform: time_pattern
-        minutes: "/15"
       - platform: state
-        entity_id:
-          - binary_sensor.r1t_locked_state
-          - binary_sensor.r1t_charging_status
-          - binary_sensor.r1t_charger_connection
-          - binary_sensor.r1t_door_front_left
-          - binary_sensor.r1t_door_front_right
-          - binary_sensor.r1t_door_rear_left
-          - binary_sensor.r1t_door_rear_right
-          - binary_sensor.r1t_window_front_left
-          - binary_sensor.r1t_window_front_right
-          - binary_sensor.r1t_window_rear_left
-          - binary_sensor.r1t_window_rear_right
-          - binary_sensor.r1t_front_trunk
-          - binary_sensor.r1t_tailgate
-          - binary_sensor.r1t_liftgate
-          - binary_sensor.r1t_tonneau
-          - binary_sensor.r1t_gear_tunnel_left
-          - binary_sensor.r1t_gear_tunnel_right
-        to: ~
+        entity_id: sensor.rivian_trmnl_payload
+        attribute: payload
+      - platform: time_pattern
+        minutes: "/30"
     condition:
       - condition: template
         value_template: >-
           {{ this.attributes.last_triggered is none
              or (now() - this.attributes.last_triggered).total_seconds() > 290 }}
+      - condition: template
+        value_template: >-
+          {{ state_attr('sensor.rivian_trmnl_payload', 'payload') not in [none, ''] }}
     action:
       - service: rest_command.trmnl_rivian_push
+        data:
+          body: "{{ state_attr('sensor.rivian_trmnl_payload', 'payload') }}"

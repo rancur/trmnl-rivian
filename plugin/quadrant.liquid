@@ -9,6 +9,7 @@
       </div>
     </div>
     {% render "stat", label: "Range", value: range, unit: distance_unit %}
+    {% render "stat", label: "Cabin", value: cabin_display %}
   </div>
 
   <div class="progress-bar progress-bar--xsmall w--full">
@@ -18,22 +19,17 @@
   </div>
 
   <div class="flex flex--row flex--center-y flex--between w--full">
-    <span class="label label--small">{{ mode }}</span>
-    {% if secure %}
-      <span class="label label--small">{{ cabin_display }}</span>
+    <span class="label label--small">{{ mode_detail }}</span>
+    {% if issue_count == 0 %}
+      <span class="label label--small">&#10003;&nbsp;{{ health_summary }}</span>
     {% else %}
-      <span class="label label--small label--filled" data-clamp="1">
-        {%- unless locked -%}Unlocked{%- if open_count > 0 -%}&nbsp;&middot;&nbsp;{%- endif -%}{%- endunless -%}
-        {%- if open_count > 0 -%}
-          {%- if locked -%}{{ closure_summary }}{%- else -%}{{ open_count }} open{%- endif -%}
-        {%- endif -%}
-      </span>
+      <span class="label label--small label--filled" data-clamp="1">&#10007;&nbsp;{{ health_summary }}</span>
     {% endif %}
   </div>
 
 </div>
 
 <div class="title_bar">
-  <img class="image" src="/images/plugins/trmnl--render.svg" />
-  <span class="title">{{ vehicle }}</span>
+  {% if logo_url %}<img class="image" src="{{ logo_url }}" />{% else %}{{ vehicle_mark }}{% endif %}
+  <span class="title">{{ display_name }}</span>
 </div>
