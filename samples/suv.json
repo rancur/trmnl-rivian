@@ -37,7 +37,7 @@
   "battery_12v_ok": true,
   "fluids_ok": false,
   "software_ok": true,
-  "updated_at": "2026-07-30T11:20:00-0700",
+  "_age_min": 2,
   "location": "",
   "service_mode": false,
   "driving": true,
@@ -45,5 +45,7 @@
   "last_charge_end_soc": 0,
   "last_charge_kwh": 0,
   "last_charge_at": "",
-  "moved_since_charge": true
+  "moved_since_charge": true,
+  "link_age_min": 0,
+  "last_charge_kwh_est": false
 }

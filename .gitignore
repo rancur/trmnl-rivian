@@ -11,3 +11,33 @@ preview/*.html
 
 # trmnlp build output
 _build/
+
+# --- secrets and personal data -----------------------------------------------
+# Nothing below should ever reach a commit. The plugin needs a TRMNL webhook URL
+# — which is a bearer credential, in that anyone holding it can write to your
+# screen — and its payloads carry your odometer, your zone names and the name
+# you gave your vehicle.
+
+# Home Assistant config fragments, which is where the webhook URL lives
+secrets.yaml
+secrets.yml
+packages/
+
+# trmnlp stores its API credentials here
+.trmnlp.local.yml
+.trmnlp/
+.trmnl/
+
+# Generic credential shapes
+.env
+.env.*
+*.pem
+*.key
+*.token
+credentials.json
+
+# docs/DEPLOYMENT.md asks you to drop a real payload here while debugging.
+# It contains your actual vehicle state — keep it local.
+samples/live.json
+samples/live-*.json
+preview/live-*.png
