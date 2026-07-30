@@ -365,12 +365,45 @@ actually lives:
   the values on screen. Putting `now()` in a payload makes every push unique,
   defeats deduplication and forces a redraw every single time.
 
+### TRMNL's hard limits
+
+Both are enforced server-side, neither is configurable, and there is no setting
+in the TRMNL UI to raise either:
+
+| Limit | Free | TRMNL+ | On breach |
+|---|---|---|---|
+| Webhook posts | **12 per hour** | 30 per hour | `429` |
+| Payload size | **2 kB** | 5 kB | rejected |
+
+The payload this package sends is about 1 kB, and `npm run test:ha` fails the
+build if any scenario exceeds 2048 bytes. If you use `deep_merge`, note that the
+*merged* result must fit, not just what you sent.
+
+> **A trap worth knowing about.** Turning on **Debug Logs** for a plugin
+> temporarily raises the rate limit. If you calibrate your push interval while
+> they are on, everything looks fine — and then starts returning `429`s when
+> they expire a day later, with nothing on your side having changed. Set the
+> throttle from the numbers below, not from what you can get away with today.
+
 ### Rate limiting, and why it queues
 
-TRMNL accepts **12 webhooks/hour** (30 on TRMNL+). The package enforces a
-minimum gap of **330 seconds**, which admits at most
-`floor(3600/330) + 1 = 11` pushes in any rolling hour. (An earlier version used
-290 s, which allows 13, and earned `429`s.)
+The package enforces a **minimum gap of 330 seconds** between sends. The
+arithmetic, since getting this wrong is a delayed failure:
+
+- A hard minimum gap of `g` seconds admits `floor(3600/g) + 1` sends in any
+  rolling hour — the `+ 1` because a window can capture both endpoints.
+- At `g = 330`: `floor(3600/330) + 1 = 10 + 1 = **11**`. One push of headroom
+  under the cap of 12.
+- At the previous `g = 290`: `floor(3600/290) + 1 = 12 + 1 = **13**`. Over the
+  cap, which is what earned the `429`s. Even its steady-state rate,
+  `3600/290 = 12.4/hour`, was already above 12.
+
+**The 30-minute heartbeat does not add to that total.** Every send — priority,
+routine and heartbeat alike — funnels through one `mode: queued` script that
+holds the gap, so the heartbeat can at most *occupy* one of the 11 slots rather
+than adding a twelfth. That is the reason the throttle lives in the script and
+not in each automation: two independent throttles cannot be reasoned about
+together, and the earlier design's heartbeat sat outside the count.
 
 Pushes are split by importance rather than simply dropped:
 
@@ -389,9 +422,9 @@ accurate screen. On TRMNL+ you can lower the gap to 130 s.
 
 ## Data contract
 
-The webhook posts a flat `merge_variables` object, ~1 KB. **Any field may be
-`null`**, meaning the sensor did not report — which is not the same as `0` or
-`false`, and the views render it differently.
+The webhook posts a flat `merge_variables` object, ~1 kB against TRMNL's 2 kB
+limit. **Any field may be `null`**, meaning the sensor did not report — which is
+not the same as `0` or `false`, and the views render it differently.
 
 ```json
 {

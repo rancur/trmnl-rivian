@@ -506,10 +506,24 @@ script:
   # place. Queued rather than dropped: a caller that arrives inside the window
   # waits it out instead of losing its update.
   #
-  # TRMNL allows 12 webhooks/hour (30 on TRMNL+). A hard minimum gap of 330 s
-  # admits at most floor(3600/330) + 1 = 11 pushes in any rolling hour, which
-  # stays under the limit with margin. The previous value of 290 s allowed 13
-  # and earned 429s. On TRMNL+ you can lower this to 130 s (max 28/hour).
+  # TRMNL allows 12 webhook posts/hour (30 on TRMNL+), enforced server-side with
+  # a 429 and no setting to raise it.
+  #
+  # A hard minimum gap of g seconds admits floor(3600/g) + 1 sends in any rolling
+  # hour — the +1 because the window can capture both endpoints.
+  #   g = 330  ->  floor(3600/330) + 1 = 11   one push of headroom under 12
+  #   g = 290  ->  floor(3600/290) + 1 = 13   over the cap; this earned 429s
+  # On TRMNL+ (30/hour) 130 s gives floor(3600/130) + 1 = 28.
+  #
+  # The 30-minute heartbeat does NOT add to that total: it comes through here
+  # like everything else, so it can only occupy one of the 11 slots rather than
+  # adding a twelfth. That is why the throttle lives in one queued script rather
+  # than in each automation — two independent throttles cannot be reasoned about
+  # together, and a heartbeat sitting outside the count is exactly how a limit
+  # gets quietly exceeded.
+  #
+  # Beware when tuning: switching Debug Logs on for a plugin temporarily raises
+  # TRMNL's cap, so a too-fast interval looks fine until they expire a day later.
   #
   # The body is read AFTER the delay, so a queued push sends the newest payload
   # rather than the one that was current when it was scheduled — several rapid
