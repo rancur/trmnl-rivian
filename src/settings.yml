@@ -1,0 +1,44 @@
+---
+# TRMNL private plugin definition. Uploaded and downloaded by `trmnlp push` /
+# `trmnlp pull`, and read by the ZIP importer built by tools/build_plugin.py.
+#
+# `trmnlp push` needs an `id:` here to update an existing plugin rather than
+# create a new one each run. Run `trmnlp clone <name> <id>` or `trmnlp pull`
+# once against the real plugin and the id is filled in for you.
+# id: 12345
+
+name: Rivian
+
+# Home Assistant pushes to TRMNL, so HA never needs to be exposed to the
+# internet and no long-lived HA token leaves your network.
+strategy: webhook
+
+# Ceiling on how often TRMNL re-renders when no webhook arrives. Screens
+# regenerate on receipt anyway, and only when the merge variables changed.
+refresh_interval: 15
+
+no_screen_padding: 'no'
+dark_mode: 'no'
+
+# Pinned so a framework release can't silently reflow the layout — every view
+# in this repo was verified against 3.1. Bump deliberately, then re-run
+# `npm run preview:all` and check all four sizes. Use `latest` to track the
+# newest release instead.
+framework_version: '3.1'
+
+custom_fields:
+  - keyname: vehicle_label
+    name: Vehicle Label
+    field_type: string
+    optional: true
+    description: >-
+      Shown in the title bar. Leave blank to use the name you gave the vehicle
+      in the Rivian app, which Home Assistant sends in the payload.
+
+  - keyname: logo_url
+    name: Logo URL
+    field_type: string
+    optional: true
+    description: >-
+      Replaces the title bar mark with an image of your choosing. Must be a URL
+      TRMNL's renderer can reach. Leave blank to use the built-in mark.

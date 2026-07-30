@@ -1,0 +1,60 @@
+---
+# Local dev-server config for `trmnlp serve`. Never uploaded to TRMNL.
+
+watch:
+  - src
+  - .trmnlp.yml
+
+# Values for the custom fields declared in src/settings.yml.
+custom_fields:
+  vehicle_label: ""
+  logo_url: ""
+
+time_zone: America/Los_Angeles
+
+variables:
+  trmnl:
+    plugin_settings:
+      instance_name: Rivian
+
+  # Stand-in for a webhook payload so `trmnlp serve` renders something before
+  # the first push arrives. Mirrors samples/charging.json — keep them in step.
+  vehicle: Gluten Free Grocery Getter
+  model: R1T
+  body_style: truck
+  soc: 64
+  soc_limit: 80
+  range: 201
+  distance_unit: mi
+  cabin_temp: 71
+  temp_unit: F
+  odometer: 18432
+  gear: Park
+  locked: true
+  plugged_in: true
+  charging: true
+  charge_power: 11
+  charge_eta_min: 95
+  preconditioning: false
+  pet_mode: false
+  door_fl: false
+  door_fr: false
+  door_rl: false
+  door_rr: false
+  win_fl: false
+  win_fr: false
+  win_rl: false
+  win_rr: false
+  frunk: false
+  tonneau: false
+  tailgate: false
+  tunnel_l: false
+  tunnel_r: false
+  tire_fl: true
+  tire_fr: true
+  tire_rl: true
+  tire_rr: true
+  battery_12v_ok: true
+  fluids_ok: true
+  software_ok: true
+  updated_at: '2026-07-30T14:32:00-0700'

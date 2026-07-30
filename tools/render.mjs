@@ -111,8 +111,8 @@ if (!VIEWS[size]) throw new Error(`unknown view size: ${size}`);
 if (!DEVICES[device]) throw new Error(`unknown device: ${device}`);
 
 const root = resolve(import.meta.dirname, '..');
-const shared = readFileSync(`${root}/plugin/shared.liquid`, 'utf8');
-const template = readFileSync(`${root}/plugin/${view}.liquid`, 'utf8');
+const shared = readFileSync(`${root}/src/shared.liquid`, 'utf8');
+const template = readFileSync(`${root}/src/${view}.liquid`, 'utf8');
 const variables = JSON.parse(readFileSync(`${root}/samples/${sample}.json`, 'utf8'));
 
 const rendered = await renderLiquid(shared + '\n' + template, variables);
