@@ -8,17 +8,24 @@ Assistant, so nothing but your own hardware ever talks to Rivian.
 
 ![Charging](preview/full-charging.png)
 
-The screen is deliberately quiet. When the truck is locked and buttoned up, the
-closure row just reads `Closed`. When it isn't, the open items invert and become
-the loudest thing on the display:
+The screen is deliberately quiet. Everything is fine, so the check row is a line
+of ticks and the truck diagram is all outline. Leave a window down and the
+tailgate up, and the affected panels fill solid while the failing checks invert:
 
 ![Something open](preview/full-open.png)
+
+The diagram is drawn from the closure sensors, so it always matches the truck. A
+flagged tire fills its wheel, and R1S/R3 render without the bed and gear tunnel:
+
+| | |
+|---|---|
+| ![Low charge and a soft tire](preview/full-low.png) | ![SUV body style](preview/full-suv.png) |
 
 All four TRMNL sizes are implemented, so the plugin behaves in mashups:
 
 | | |
 |---|---|
-| ![Half vertical](preview/half_vertical-charging.png) | ![Quadrant](preview/quadrant-charging.png) |
+| ![Half vertical](preview/half_vertical-open.png) | ![Quadrant](preview/quadrant-open.png) |
 
 ## What it shows
 
@@ -28,9 +35,12 @@ All four TRMNL sizes are implemented, so the plugin behaves in mashups:
 | **Range** | Estimated remaining range in your Home Assistant unit |
 | **Cabin** | Interior temperature — useful for deciding whether to precondition |
 | **Full in** | Time to charge limit while plugged in; swaps to odometer otherwise |
-| **Doors / Windows / Storage** | Named individually when open, `Closed` when not |
-| **Security** | Locked or unlocked |
-| **Badges** | Low charge, preconditioning, pet mode, tire pressure |
+| **Vehicle diagram** | Top-down schematic; open closures and flagged tires fill solid |
+| **Health row** | Locked, Closed, Tires, 12V, Fluids, Software — ticked or inverted |
+| **Badges** | Low charge, preconditioning, pet mode |
+
+The title bar shows the name you gave the vehicle in the Rivian app, read from
+the Home Assistant device registry, and falls back to the model.
 
 ## Setup
 
@@ -81,26 +91,58 @@ trmnl_webhook_url: "https://trmnl.com/api/custom_plugins/<uuid>"
 Open `packages/trmnl_rivian.yaml` and set `vehicle` to your vehicle's entity
 slug — whatever prefixes your Rivian entities. Check **Developer Tools → States**
 for `battery_state_of_charge`; if the entity is
-`sensor.r1t_battery_state_of_charge`, the slug is `r1t`. Update the entity list
-in the automation trigger to match, then restart Home Assistant.
+`sensor.r1t_battery_state_of_charge`, the slug is `r1t`. It appears twice near
+the top of the file. Restart Home Assistant.
 
-To push immediately rather than waiting for the next trigger, run
-`rest_command.trmnl_rivian_push` from **Developer Tools → Actions**.
+To push immediately rather than waiting for a change, run
+`rest_command.trmnl_rivian_push` from **Developer Tools → Actions** with
+`body: {{ state_attr('sensor.rivian_trmnl_payload','payload') }}`.
 
-### 3. Rate limits
+## How refreshing actually works
 
-TRMNL accepts 12 webhooks/hour (30 on TRMNL+). The automation pushes on a
-15-minute heartbeat plus meaningful state changes — doors, windows, lock,
-charging — throttled to at most one push every 5 minutes. That stays under the
-free-tier limit even on a busy afternoon.
+Worth understanding, because it is not what you would guess:
+
+**TRMNL is pull-only.** Devices ping the server; the server never pushes. There
+is no API to wake a device early — not in the
+[OpenAPI spec](https://trmnl.com/api-docs/openapi.yaml), not anywhere. Your
+device decides when to redraw, based on its own refresh rate (15 min standard,
+5 min on TRMNL+). A webhook cannot shorten that.
+
+**But TRMNL only regenerates a screen when the merge variables changed.** If a
+push carries data identical to last time, no new image is rendered and the panel
+does not redraw. That is where the control actually lives, and this package uses
+it deliberately in two ways:
+
+- **The push itself is change-driven.** The payload lives in a template sensor,
+  which Home Assistant only re-renders when an entity it reads changes. The
+  automation fires on that attribute changing, so a webhook goes out when the
+  truck's state changes rather than on a timer. The 30-minute time pattern is
+  just insurance against a dropped request.
+
+- **Noisy values are quantised**, exactly the concern you raised about charge
+  rate. Charge power is rounded to whole kW and time-to-full to the nearest
+  5 minutes, so a charger drifting between 11.2 and 11.4 kW produces an
+  identical payload and no redraw. Temperatures, range and odometer are whole
+  numbers for the same reason.
+
+One subtle trap this avoids: putting `now()` in the payload. A render timestamp
+changes on every push, which makes every payload unique, which defeats TRMNL's
+deduplication and forces a redraw every single time. The `updated_at` field is
+instead the newest `last_changed` among the values on screen — so it means "data
+as of", and it holds still while the truck does.
+
+TRMNL accepts 12 webhooks/hour (30 on TRMNL+); pushes are throttled to at most
+one every 5 minutes.
 
 ## Data contract
 
-The webhook posts a flat `merge_variables` object, ~460 bytes:
+The webhook posts a flat `merge_variables` object, ~800 bytes:
 
 ```json
 {
-  "vehicle": "R1T",
+  "vehicle": "My Rivian",
+  "model": "R1T",
+  "body_style": "truck",
   "soc": 64,
   "soc_limit": 80,
   "range": 200,
@@ -112,21 +154,39 @@ The webhook posts a flat `merge_variables` object, ~460 bytes:
   "locked": true,
   "plugged_in": true,
   "charging": true,
-  "charge_power": 11.2,
+  "charge_power": 11,
   "charge_eta_min": 95,
   "preconditioning": false,
   "pet_mode": false,
-  "tire_alert": false,
-  "doors_open": [],
-  "windows_open": ["Front left"],
-  "storage_open": ["Tailgate"],
+
+  "door_fl": false, "door_fr": false, "door_rl": false, "door_rr": false,
+  "win_fl": true,   "win_fr": false,  "win_rl": false,  "win_rr": false,
+  "frunk": false, "tonneau": false, "tailgate": true,
+  "tunnel_l": false, "tunnel_r": false,
+
+  "tire_fl": true, "tire_fr": true, "tire_rl": true, "tire_rr": true,
+  "battery_12v_ok": true,
+  "fluids_ok": true,
+  "software_ok": true,
+
   "updated_at": "2026-07-30T14:32:00-0700"
 }
 ```
 
 Anything that produces this shape works — Home Assistant is just the convenient
-source. `doors_open` / `windows_open` / `storage_open` hold display labels, so
-they read straight onto the screen.
+source. Closures are per-position booleans rather than lists because the diagram
+needs to know *which* panel to fill; the human-readable lists are derived in
+Liquid. `body_style` is `truck` or `suv`. Booleans ending in `_ok` are true when
+healthy, so a missing field never invents an alarm.
+
+Two optional fields:
+
+- `logo_url` — replaces the title bar mark with an image of your choosing.
+- `vehicle_image_url` — replaces the diagram with a dithered photo. TRMNL renders
+  server-side, so this must be a URL TRMNL's renderer can reach; Home Assistant's
+  own image entities are behind a token'd local URL and will not work. Note the
+  trade-off: a photo cannot show which door is open, which is most of what the
+  diagram is for.
 
 ## Local development
 
@@ -153,26 +213,46 @@ node tools/render.mjs --view quadrant --sample low --device v2 --dark
 - `--dark` render in TRMNL's dark mode
 
 `tools/check_ha_template.py` renders the Home Assistant Jinja against a stubbed
-entity table, so a typo in the payload template surfaces without a round trip
+entity table and asserts the result — that a `Low` tire reads as flagged, that a
+mismatched OTA version reads as an update pending, that `locked_state: off`
+reads as *locked*. A typo or a flipped sensor surfaces without a round trip
 through a live HA instance. It writes `samples/from-ha.json`, which you can then
 render like any other sample.
 
-## Layout notes
+## Notes for anyone editing this
 
-The plugin sticks to TRMNL's framework primitives — `value`, `label`, `progress-bar`,
-`divider`, `grid`, `flex` — and adds exactly one custom CSS rule: the tick that
-marks the charge limit on the progress track, which has no framework equivalent.
-It uses `currentColor` so it inverts correctly in dark mode.
-
-Two things worth knowing if you edit the markup:
+**The framework.** The plugin sticks to TRMNL primitives — `value`, `label`,
+`progress-bar`, `divider`, `grid`, `flex` — plus one custom CSS rule for the
+charge-limit tick, which has no framework equivalent. It uses `currentColor` so
+it inverts correctly in dark mode. Things that cost real debugging time:
 
 - `gap--distribute` sets `justify-content: space-between`, but grid children can
   override it. `flex--between` is the reliable choice inside `col--span-*`.
 - `label--gray` is a dither pattern. At `label--small` on a 1-bit display it is
-  close to unreadable, so the compact views use plain `label--small` instead.
+  close to unreadable, so the compact views use plain `label--small`.
+- TRMNL's Liquid has no working array append — the `push` filter silently
+  returns an empty array. Lists are built as delimited strings and `split` at the
+  end.
+- `{% capture %}` emits raw HTML, which is how the SVG diagram is built once in
+  `shared.liquid` and reused by every view.
+- `✓` (`&#10003;`) and `✗` (`&#10007;`) render in every framework font,
+  including the pixel ones. Most decorative glyphs do not — test before relying
+  on one.
+
+**The Rivian integration.** Polarity is the thing to watch. Closure sensors are
+`DOOR`/`WINDOW` classed, so `on` means *open*. But `locked_state` is `LOCK`
+classed with `on_value="unlocked"`, so `on` means **unlocked** — the inverse of
+what it reads like. `wiper_fluid_level` is a `PROBLEM` sensor with `negate`, so
+`on` means *not normal*.
+
+Two heuristics are worth tuning against your own truck, since the integration
+does not document their vocabularies: tire pressure status is treated as healthy
+unless it falls outside a known-good list, and 12V battery health is treated as
+healthy unless it matches a known-bad list. Both fail safe — an unknown or
+unavailable reading will not raise a false alarm.
 
 ## Other states
 
 | | |
 |---|---|
-| ![Half horizontal](preview/half_horizontal-open.png) | ![Low charge](preview/full-low.png) |
+| ![Half horizontal](preview/half_horizontal-open.png) | ![Dark mode](preview/full-charging-dark.png) |

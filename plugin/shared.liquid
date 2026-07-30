@@ -1,11 +1,11 @@
 {%- comment -%}
   Shared markup is prepended to every view before rendering, so this is where
-  derived values and reusable partials live. Keep it free of layout markup.
+  derived values, the vehicle diagram and reusable partials live.
 {%- endcomment -%}
 
 <style>
   /* Charge-limit tick on the progress track. The framework has no marker
-     primitive, so this is the one custom rule the plugin adds. */
+     primitive, so this is the only custom rule the plugin adds. */
   .track { position: relative; }
   .charge-limit {
     position: absolute;
@@ -17,18 +17,82 @@
   }
 </style>
 
-{%- comment -%} ---------- derived state ---------- {%- endcomment -%}
+{%- comment -%} ---------- closures ---------- {%- endcomment -%}
+
+{%- comment -%}
+  Liquid has no array append — TRMNL's `push` filter silently returns an empty
+  array — so lists are built as delimited strings and split at the end. Labels
+  never contain a comma.
+{%- endcomment -%}
+
+{%- assign d = "" -%}
+{%- if door_fl %}{% assign d = d | append: "Front left," %}{% endif -%}
+{%- if door_fr %}{% assign d = d | append: "Front right," %}{% endif -%}
+{%- if door_rl %}{% assign d = d | append: "Rear left," %}{% endif -%}
+{%- if door_rr %}{% assign d = d | append: "Rear right," %}{% endif -%}
+{%- assign doors_open = d | split: "," -%}
+
+{%- assign w = "" -%}
+{%- if win_fl %}{% assign w = w | append: "Front left," %}{% endif -%}
+{%- if win_fr %}{% assign w = w | append: "Front right," %}{% endif -%}
+{%- if win_rl %}{% assign w = w | append: "Rear left," %}{% endif -%}
+{%- if win_rr %}{% assign w = w | append: "Rear right," %}{% endif -%}
+{%- assign windows_open = w | split: "," -%}
+
+{%- assign s = "" -%}
+{%- if frunk %}{% assign s = s | append: "Frunk," %}{% endif -%}
+{%- if tonneau %}{% assign s = s | append: "Tonneau," %}{% endif -%}
+{%- if tailgate %}{% assign s = s | append: "Tailgate," %}{% endif -%}
+{%- if tunnel_l %}{% assign s = s | append: "Gear tunnel L," %}{% endif -%}
+{%- if tunnel_r %}{% assign s = s | append: "Gear tunnel R," %}{% endif -%}
+{%- assign storage_open = s | split: "," -%}
 
 {%- assign open = doors_open | concat: windows_open | concat: storage_open -%}
 {%- assign open_count = open | size -%}
 
-{%- if locked and open_count == 0 -%}
+{%- if open_count == 0 -%}
+  {%- assign closures_ok = true -%}
+  {%- assign closure_summary = "All closed" -%}
+{%- else -%}
+  {%- assign closures_ok = false -%}
+  {%- assign closure_summary = open | join: " &middot; " -%}
+{%- endif -%}
+
+{%- if locked and closures_ok -%}
   {%- assign secure = true -%}
 {%- else -%}
   {%- assign secure = false -%}
 {%- endif -%}
 
-{%- comment -%} Headline mode, most specific first. {%- endcomment -%}
+{%- comment -%} ---------- health ---------- {%- endcomment -%}
+
+{%- if tire_fl and tire_fr and tire_rl and tire_rr -%}
+  {%- assign tires_ok = true -%}
+{%- else -%}
+  {%- assign tires_ok = false -%}
+{%- endif -%}
+
+{%- comment -%}
+  Anything the driver would want to act on. Counted so a view too small for the
+  full check row can still say "2 need attention".
+{%- endcomment -%}
+{%- assign issue_count = 0 -%}
+{%- unless locked %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+{%- unless closures_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+{%- unless tires_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+{%- unless battery_12v_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+{%- unless fluids_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+{%- unless software_ok %}{% assign issue_count = issue_count | plus: 1 %}{% endunless -%}
+
+{%- comment -%} One-line health digest for views too narrow for the check row. {%- endcomment -%}
+{%- if issue_count == 0 -%}
+  {%- assign health_summary = "All good" -%}
+{%- else -%}
+  {%- assign health_summary = "issue" | pluralize: issue_count -%}
+{%- endif -%}
+
+{%- comment -%} ---------- charge / mode ---------- {%- endcomment -%}
+
 {%- if charging -%}
   {%- assign mode = "Charging" -%}
 {%- elsif plugged_in -%}
@@ -39,7 +103,6 @@
   {%- assign mode = "Parked" -%}
 {%- endif -%}
 
-{%- comment -%} Worth calling out only when nothing is already replenishing it. {%- endcomment -%}
 {%- if soc <= 15 and charging == false -%}
   {%- assign low_charge = true -%}
 {%- else -%}
@@ -62,16 +125,109 @@
   {%- assign eta = eta_m | append: "m" -%}
 {%- endif -%}
 
-{%- comment -%} One-line closure digest for the smaller views. {%- endcomment -%}
-{%- if open_count == 0 -%}
-  {%- assign closure_summary = "All closed" -%}
-{%- else -%}
-  {%- assign closure_summary = open | join: ", " -%}
-{%- endif -%}
-
 {%- assign cabin_display = cabin_temp | append: "&deg;" | append: temp_unit -%}
 {%- assign odometer_fmt = odometer | number_with_delimiter -%}
 {%- assign updated_fmt = updated_at | date: "%-I:%M %p" -%}
+{%- assign display_name = vehicle | default: model -%}
+
+{%- comment -%} ---------- vehicle diagram ----------
+
+  Top-down schematic, nose up. Anything open fills solid so it reads instantly
+  on a 1-bit panel; a flagged tire fills its wheel. Captured once here so every
+  view can drop it in with {{ vehicle_svg }}.
+
+{%- endcomment -%}
+
+{%- if door_fl %}{% assign f_dfl = "currentColor" %}{% else %}{% assign f_dfl = "none" %}{% endif -%}
+{%- if door_fr %}{% assign f_dfr = "currentColor" %}{% else %}{% assign f_dfr = "none" %}{% endif -%}
+{%- if door_rl %}{% assign f_drl = "currentColor" %}{% else %}{% assign f_drl = "none" %}{% endif -%}
+{%- if door_rr %}{% assign f_drr = "currentColor" %}{% else %}{% assign f_drr = "none" %}{% endif -%}
+{%- if win_fl %}{% assign f_wfl = "currentColor" %}{% else %}{% assign f_wfl = "none" %}{% endif -%}
+{%- if win_fr %}{% assign f_wfr = "currentColor" %}{% else %}{% assign f_wfr = "none" %}{% endif -%}
+{%- if win_rl %}{% assign f_wrl = "currentColor" %}{% else %}{% assign f_wrl = "none" %}{% endif -%}
+{%- if win_rr %}{% assign f_wrr = "currentColor" %}{% else %}{% assign f_wrr = "none" %}{% endif -%}
+{%- if frunk %}{% assign f_frunk = "currentColor" %}{% else %}{% assign f_frunk = "none" %}{% endif -%}
+{%- if tailgate %}{% assign f_tail = "currentColor" %}{% else %}{% assign f_tail = "none" %}{% endif -%}
+{%- if tonneau %}{% assign f_bed = "currentColor" %}{% else %}{% assign f_bed = "none" %}{% endif -%}
+{%- if tunnel_l %}{% assign f_tunl = "currentColor" %}{% else %}{% assign f_tunl = "none" %}{% endif -%}
+{%- if tunnel_r %}{% assign f_tunr = "currentColor" %}{% else %}{% assign f_tunr = "none" %}{% endif -%}
+{%- if tire_fl %}{% assign f_tfl = "none" %}{% else %}{% assign f_tfl = "currentColor" %}{% endif -%}
+{%- if tire_fr %}{% assign f_tfr = "none" %}{% else %}{% assign f_tfr = "currentColor" %}{% endif -%}
+{%- if tire_rl %}{% assign f_trl = "none" %}{% else %}{% assign f_trl = "currentColor" %}{% endif -%}
+{%- if tire_rr %}{% assign f_trr = "none" %}{% else %}{% assign f_trr = "currentColor" %}{% endif -%}
+
+{%- capture vehicle_svg -%}
+{%- comment -%}
+  width/height 100% with the default preserveAspectRatio lets the SVG fit
+  whatever box the view gives it, instead of dictating its own size.
+{%- endcomment -%}
+<svg viewBox="0 0 120 300" fill="none" stroke="currentColor" stroke-width="2"
+     style="width:100%;height:100%;display:block">
+  <!-- wheels, at the axles -->
+  <rect x="0.5" y="104" width="9" height="36" rx="4" fill="{{ f_tfl }}"/>
+  <rect x="110.5" y="104" width="9" height="36" rx="4" fill="{{ f_tfr }}"/>
+  <rect x="0.5" y="214" width="9" height="36" rx="4" fill="{{ f_trl }}"/>
+  <rect x="110.5" y="214" width="9" height="36" rx="4" fill="{{ f_trr }}"/>
+
+  <!-- body: 104 x 288 is the R1T's real footprint ratio -->
+  <rect x="8" y="6" width="104" height="288" rx="16" stroke-width="2.5"/>
+
+  <!-- light bar across the nose -->
+  <path d="M26 15 H94" stroke-width="3"/>
+
+  <!-- frunk -->
+  <rect x="20" y="24" width="80" height="44" rx="6" fill="{{ f_frunk }}"/>
+
+  <!-- windshield -->
+  <path d="M22 74 H98 L90 92 H30 Z" stroke-width="1.5"/>
+
+  <!-- roof -->
+  <rect x="32" y="94" width="56" height="74" rx="4" stroke-width="1.5"/>
+
+  <!-- rear window -->
+  <path d="M30 170 H90 L98 186 H22 Z" stroke-width="1.5"/>
+
+  <!-- doors -->
+  <rect x="9" y="96" width="21" height="37" rx="3" fill="{{ f_dfl }}"/>
+  <rect x="9" y="133" width="21" height="37" rx="3" fill="{{ f_drl }}"/>
+  <rect x="90" y="96" width="21" height="37" rx="3" fill="{{ f_dfr }}"/>
+  <rect x="90" y="133" width="21" height="37" rx="3" fill="{{ f_drr }}"/>
+
+  <!-- windows, on the inboard edge of each door -->
+  <rect x="22" y="101" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wfl }}"/>
+  <rect x="22" y="138" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wrl }}"/>
+  <rect x="92" y="101" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wfr }}"/>
+  <rect x="92" y="138" width="6" height="27" rx="2" stroke-width="1.5" fill="{{ f_wrr }}"/>
+
+  {% if body_style == "truck" %}
+    <!-- gear tunnel, between cab and bed -->
+    <rect x="9" y="190" width="21" height="18" rx="3" fill="{{ f_tunl }}"/>
+    <rect x="90" y="190" width="21" height="18" rx="3" fill="{{ f_tunr }}"/>
+    <!-- bed + tailgate -->
+    <rect x="14" y="212" width="92" height="64" rx="4" fill="{{ f_bed }}"/>
+    <rect x="14" y="278" width="92" height="12" rx="3" fill="{{ f_tail }}"/>
+  {% else %}
+    <!-- cargo area + liftgate -->
+    <rect x="14" y="190" width="92" height="86" rx="4" fill="{{ f_bed }}"/>
+    <rect x="14" y="278" width="92" height="12" rx="3" fill="{{ f_tail }}"/>
+  {% endif %}
+</svg>
+{%- endcapture -%}
+
+{%- comment -%}
+  Front-view mark for the title bar: the vehicle's face, with the light bar that
+  reads even at 28px. Not the Rivian trademark — override with `logo_url` in the
+  payload to use an official asset.
+{%- endcomment -%}
+{%- capture vehicle_mark -%}
+<svg class="image" viewBox="0 0 36 24" fill="none" stroke="currentColor" stroke-width="2.5"
+     style="height:100%;width:auto;display:block">
+  <rect x="1.5" y="2.5" width="33" height="19" rx="6"/>
+  <rect x="5" y="7" width="4.5" height="10" rx="2.25" fill="currentColor" stroke="none"/>
+  <rect x="26.5" y="7" width="4.5" height="10" rx="2.25" fill="currentColor" stroke="none"/>
+  <path d="M11.5 12 H24.5"/>
+</svg>
+{%- endcapture -%}
 
 {%- comment -%} ---------- partials ---------- {%- endcomment -%}
 
@@ -89,17 +245,13 @@
 {% endtemplate %}
 
 {%- comment -%}
-  One closure group. Reads "Closed" when nothing is open; names what is open
-  otherwise, inverted so an open truck is obvious from across the room.
+  A health check. Passing checks stay quiet; failing ones invert so the eye
+  lands on them first.
 {%- endcomment -%}
-{% template closure %}
-<div class="flex flex--col flex--left gap--xsmall">
-  <span class="label label--small">{{ label }}</span>
-  {% assign count = items | size %}
-  {% if count > 0 %}
-    <span class="label label--filled" data-clamp="2">{{ items | join: ", " }}</span>
-  {% else %}
-    <span class="label label--gray">{{ empty_label | default: "Closed" }}</span>
-  {% endif %}
-</div>
+{% template check %}
+{% if ok %}
+  <span class="label label--small">&#10003;&nbsp;{{ label }}</span>
+{% else %}
+  <span class="label label--small label--filled">&#10007;&nbsp;{{ label }}</span>
+{% endif %}
 {% endtemplate %}

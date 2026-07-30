@@ -1,4 +1,4 @@
-<div class="layout layout--col layout--left gap--medium">
+<div class="layout layout--col layout--left gap--small">
 
   <div class="flex flex--col flex--left gap--none">
     <span class="label label--small">State of charge</span>
@@ -9,48 +9,54 @@
   </div>
 
   <div class="flex flex--col flex--left gap--small w--full">
-    <div class="progress-bar progress-bar--base w--full">
+    <div class="progress-bar progress-bar--small w--full">
       <div class="track">
         <div class="fill" style="width: {{ soc }}%"></div>
         <div class="charge-limit" style="left: {{ soc_limit }}%"></div>
       </div>
     </div>
     <div class="flex flex--row flex--between w--full">
-      <span class="label label--small">{{ mode }}</span>
+      <span class="label label--small">{{ mode_detail }}</span>
       <span class="label label--small">Limit {{ soc_limit }}%</span>
     </div>
   </div>
 
-  <div class="flex flex--col flex--left gap--small w--full">
-    {% render "stat", label: "Range", value: range, unit: distance_unit %}
-    <div class="divider"></div>
-    {% render "stat", label: "Cabin", value: cabin_display %}
-    <div class="divider"></div>
-    {% if charging %}
-      {% render "stat", label: "Full in", value: eta %}
-    {% else %}
-      {% render "stat", label: "Odometer", value: odometer_fmt, unit: distance_unit %}
-    {% endif %}
+  <div class="divider"></div>
+
+  <div class="grid grid--cols-3 gap--small w--full">
+    <div class="col--span-2 flex flex--col flex--left gap--small w--full">
+      {% render "stat", label: "Range", value: range, unit: distance_unit %}
+      {% render "stat", label: "Cabin", value: cabin_display %}
+      {% if charging %}
+        {% render "stat", label: "Full in", value: eta %}
+      {% else %}
+        {% render "stat", label: "Odometer", value: odometer_fmt, unit: distance_unit %}
+      {% endif %}
+    </div>
+    <div class="col--span-1 flex flex--col flex--center-x w--full">
+      <div class="w--full" style="height: 150px">
+        {{ vehicle_svg }}
+      </div>
+    </div>
   </div>
 
   <div class="flex flex--col flex--left gap--xsmall w--full">
     <div class="divider"></div>
-    {% if secure %}
-      <span class="label label--small">Locked &middot; All closed</span>
-    {% else %}
-      <div class="flex flex--row flex--wrap gap--small">
-        {% unless locked %}<span class="label label--small label--filled">Unlocked</span>{% endunless %}
-        {% for item in open %}
-          <span class="label label--small label--filled">{{ item }}</span>
-        {% endfor %}
-      </div>
-    {% endif %}
+    <div class="flex flex--row flex--center-y flex--left gap--small w--full">
+      {% render "check", label: "Locked", ok: locked %}
+      {% render "check", label: "Closed", ok: closures_ok %}
+      {% render "check", label: "Tires", ok: tires_ok %}
+      {% render "check", label: "12V", ok: battery_12v_ok %}
+    </div>
+    {% unless closures_ok %}
+      <span class="label label--small" data-clamp="1">{{ closure_summary }}</span>
+    {% endunless %}
   </div>
 
 </div>
 
 <div class="title_bar">
-  <img class="image" src="/images/plugins/trmnl--render.svg" />
-  <span class="title">{{ vehicle }}</span>
+  {% if logo_url %}<img class="image" src="{{ logo_url }}" />{% else %}{{ vehicle_mark }}{% endif %}
+  <span class="title">{{ display_name }}</span>
   <span class="instance">{{ updated_fmt }}</span>
 </div>
