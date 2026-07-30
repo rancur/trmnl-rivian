@@ -70,10 +70,13 @@ class State:
         self.last_changed = datetime(2026, 7, 30, 14, 32, tzinfo=TZ)
 
 
+ACTIVE = {}  # entity table for the scenario currently under test
+
+
 def states(entity=None):
     if entity is None:
         return None
-    return STATES.get(entity, ("unknown", {}))[0]
+    return ACTIVE.get(entity, ("unknown", {}))[0]
 
 
 class StatesLookup:
@@ -83,9 +86,9 @@ class StatesLookup:
         return states(entity)
 
     def __getitem__(self, entity):
-        if entity not in STATES:
+        if entity not in ACTIVE:
             return None
-        return State(*STATES[entity])
+        return State(*ACTIVE[entity])
 
 
 def is_state(entity, value):
@@ -93,7 +96,7 @@ def is_state(entity, value):
 
 
 def state_attr(entity, attr):
-    return STATES.get(entity, ("unknown", {}))[1].get(attr)
+    return ACTIVE.get(entity, ("unknown", {}))[1].get(attr)
 
 
 class LenientLoader(yaml.SafeLoader):
@@ -103,7 +106,7 @@ class LenientLoader(yaml.SafeLoader):
 LenientLoader.add_multi_constructor("!", lambda loader, suffix, node: f"<{suffix}>")
 
 
-def main():
+def load_template():
     path = ROOT / "homeassistant" / "trmnl_rivian.yaml"
     config = yaml.load(path.read_text(), Loader=LenientLoader)
     # The package has several template blocks; find the one holding the payload
@@ -117,10 +120,13 @@ def main():
         ),
         None,
     )
-    if template is None:
-        print("no template sensor exposes a `payload` attribute")
-        return 1
+    return template
 
+
+def render(template, table):
+    """Render the payload template against a given entity table."""
+    global ACTIVE
+    ACTIVE = table
     env = Environment()
     env.filters["to_json"] = json.dumps
     env.filters["as_local"] = lambda d: d.astimezone(TZ)
@@ -128,10 +134,21 @@ def main():
         states=StatesLookup(),
         is_state=is_state,
         state_attr=state_attr,
-        device_id=lambda entity: "dev_1",
-        device_attr=lambda dev, attr: DEVICE.get(attr),
-        dict=dict,
+        # Returns none for an unknown entity, exactly as Home Assistant does,
+        # so the guard around device_attr is exercised.
+        device_id=lambda entity: "dev_1" if entity in ACTIVE else None,
+        device_attr=lambda dev, attr: DEVICE.get(attr) if dev else None,
     )
+    return rendered
+
+
+def scenario(label, template, table, expected, required=()):
+    print(f"\n--- {label} ---")
+    try:
+        rendered = render(template, table)
+    except Exception as exc:  # noqa: BLE001 - any Jinja failure is a test failure
+        print(f"template raised {type(exc).__name__}: {exc}")
+        return 1
 
     try:
         payload = json.loads(rendered)
@@ -151,7 +168,7 @@ def main():
         print("payload exceeds the webhook size limit")
         return 1
 
-    required = [
+    contract = [
         "vehicle", "model", "body_style", "soc", "soc_limit", "range",
         "distance_unit", "cabin_temp", "temp_unit", "odometer", "gear", "locked",
         "plugged_in", "charging", "charge_power", "charge_eta_min",
@@ -164,13 +181,36 @@ def main():
         "tire_fl", "tire_fr", "tire_rl", "tire_rr",
         "battery_12v_ok", "fluids_ok", "software_ok", "updated_at",
     ]
-    if missing := [k for k in required if k not in merge]:
+    if missing := [k for k in contract if k not in merge]:
         print("missing keys:", ", ".join(missing))
         return 1
 
-    # The stub above encodes a specific truck; if the template misreads any of
-    # these, the screen would be confidently wrong rather than obviously broken.
-    expected = {
+    failures = [
+        f"  {k}: expected {v!r}, got {merge.get(k)!r}"
+        for k, v in expected.items()
+        if merge.get(k) != v
+    ]
+    if failures:
+        print(f"payload does not match the {label} scenario:")
+        print("\n".join(failures))
+        return 1
+
+    print(f"{len(expected)} assertions passed")
+    if required:
+        (ROOT / "samples" / "from-ha.json").write_text(json.dumps(merge, indent=2) + "\n")
+        print("wrote samples/from-ha.json")
+    return 0
+
+
+def main():
+    template = load_template()
+    if template is None:
+        print("no template sensor exposes a `payload` attribute")
+        return 1
+
+    # A healthy truck: mid-charge, window down, tailgate up, soft rear tire,
+    # pending software update, parked at home after a timed overnight session.
+    healthy = {
         "vehicle": "Gluten Free Grocery Getter",
         "body_style": "truck",
         "locked": True,       # locked_state 'off' means locked
@@ -192,17 +232,39 @@ def main():
         "last_charge_kwh": 44.8,
         "moved_since_charge": False,  # odometer 18433 rounded == snapshot
     }
-    failures = [
-        f"  {k}: expected {v!r}, got {merge.get(k)!r}"
-        for k, v in expected.items()
-        if merge.get(k) != v
-    ]
-    if failures:
-        print("payload does not match the stubbed vehicle:")
-        print("\n".join(failures))
-        return 1
 
-    out = ROOT / "samples" / "from-ha.json"
+    # Integration installed but the vehicle has not reported yet: only the SOC
+    # sensor exists. Nothing may crash, and nothing may invent an alarm.
+    degraded = {
+        "locked": True,          # no lock sensor is not "unlocked"
+        "tire_fl": True, "tire_fr": True, "tire_rl": True, "tire_rr": True,
+        "battery_12v_ok": True,
+        "fluids_ok": True,
+        "software_ok": True,     # no available version means nothing pending
+        "charging": False,
+        "plugged_in": False,
+        "driving": False,
+        "service_mode": False,
+        "location": "",
+        "moved_since_charge": True,   # no snapshot means nothing to report
+    }
+
+    # Nothing at all: the integration is not set up, or every entity is
+    # unavailable. device_id() returns none, so the device-registry guard runs.
+    empty = dict(degraded, soc=0, vehicle="Rivian", model="", updated_at="")
+
+    rc = scenario("healthy vehicle", template, STATES, healthy, required=True)
+    if rc:
+        return rc
+    rc = scenario(
+        "degraded: only a state of charge",
+        template,
+        {"sensor.r1t_battery_state_of_charge": ("64", {"unit_of_measurement": "%"})},
+        degraded,
+    )
+    if rc:
+        return rc
+    return scenario("no entities at all", template, {}, empty)
     out.write_text(json.dumps(merge, indent=2) + "\n")
     print(json.dumps(merge, indent=2))
     print(f"\nall {len(expected)} assertions passed -> wrote {out.relative_to(ROOT)}")

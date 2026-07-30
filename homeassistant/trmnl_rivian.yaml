@@ -26,8 +26,9 @@ template:
   # away once it ends, so the summary is frozen here as it finishes. These two
   # are trigger-based, which means Home Assistant restores them across restarts.
   #
-  # NOTE: trigger entity_ids must be literal, so the `r1t` below cannot use the
-  # `vehicle` variable. Change it here too.
+  # NOTE: Home Assistant requires literal entity ids in a trigger, so these
+  # cannot read the slug from a variable. `tools/configure_ha.py --slug ...`
+  # rewrites every occurrence for you.
 
   - trigger:
       - platform: state
@@ -81,12 +82,20 @@ template:
             {%- set odo_ent = S ~ 'odometer' -%}
 
             {#- Name and model come from the device registry, so the screen shows
-                whatever you named the vehicle in the Rivian app. -#}
+                whatever you named the vehicle in the Rivian app. Guarded because
+                device_id() returns none if the entity does not exist yet, and
+                device_attr(none, ...) raises. -#}
             {%- set dev = device_id(soc_ent) -%}
-            {%- set model = device_attr(dev, 'model') | default('', true) -%}
-            {%- set name = device_attr(dev, 'name_by_user')
-                           or device_attr(dev, 'name')
-                           or model | default('Rivian', true) -%}
+            {%- if dev -%}
+              {%- set model = device_attr(dev, 'model') | default('', true) -%}
+              {%- set name = device_attr(dev, 'name_by_user')
+                             or device_attr(dev, 'name')
+                             or model
+                             or 'Rivian' -%}
+            {%- else -%}
+              {%- set model = '' -%}
+              {%- set name = 'Rivian' -%}
+            {%- endif -%}
 
             {#- R1T/R2T have a bed and gear tunnel; R1S/R3 do not. -#}
             {%- if 'T' in model.upper().replace('RIVIAN', '') -%}
@@ -119,13 +128,14 @@ template:
             {%- set locked = not is_state(B ~ 'locked_state', 'on') -%}
 
             {#- Tyre status vocabulary is not documented; anything outside this
-                known-good list is surfaced. Widen it if you see false alarms. -#}
+                known-good list is surfaced. Widen it if you see false alarms.
+                Written out rather than looped so it relies on nothing beyond
+                plain Jinja. -#}
             {%- set tyre_ok_values = ['ok', 'normal', 'nominal', 'unknown', 'unavailable', ''] -%}
-            {%- set ns = namespace(tires={}) -%}
-            {%- for corner in ['front_left', 'front_right', 'rear_left', 'rear_right'] -%}
-              {%- set st = states(S ~ 'tire_pressure_' ~ corner ~ '_status') | lower -%}
-              {%- set ns.tires = dict(ns.tires, **{corner: st in tyre_ok_values}) -%}
-            {%- endfor -%}
+            {%- set tire_fl = states(S ~ 'tire_pressure_front_left_status') | lower in tyre_ok_values -%}
+            {%- set tire_fr = states(S ~ 'tire_pressure_front_right_status') | lower in tyre_ok_values -%}
+            {%- set tire_rl = states(S ~ 'tire_pressure_rear_left_status') | lower in tyre_ok_values -%}
+            {%- set tire_rr = states(S ~ 'tire_pressure_rear_right_status') | lower in tyre_ok_values -%}
 
             {#- Fluids: wiper level is a PROBLEM binary sensor (on = not normal);
                 brake fluid reports a truthy string when low. -#}
@@ -211,10 +221,10 @@ template:
                   'tunnel_l': is_state(B ~ 'gear_tunnel_left', 'on'),
                   'tunnel_r': is_state(B ~ 'gear_tunnel_right', 'on'),
 
-                  'tire_fl': ns.tires['front_left'],
-                  'tire_fr': ns.tires['front_right'],
-                  'tire_rl': ns.tires['rear_left'],
-                  'tire_rr': ns.tires['rear_right'],
+                  'tire_fl': tire_fl,
+                  'tire_fr': tire_fr,
+                  'tire_rl': tire_rl,
+                  'tire_rr': tire_rr,
                   'battery_12v_ok': batt12_ok,
                   'fluids_ok': fluids_ok,
                   'software_ok': software_ok,

@@ -96,10 +96,6 @@ exactly what TRMNL does with the Shared tab at render time.
 
 Copy the package and add your webhook URL:
 
-```bash
-cp homeassistant/trmnl_rivian.yaml <config>/packages/trmnl_rivian.yaml
-```
-
 ```yaml
 # configuration.yaml
 homeassistant:
@@ -111,11 +107,17 @@ homeassistant:
 trmnl_webhook_url: "https://trmnl.com/api/custom_plugins/<uuid>"
 ```
 
-Open `packages/trmnl_rivian.yaml` and set `vehicle` to your vehicle's entity
-slug — whatever prefixes your Rivian entities. Check **Developer Tools → States**
-for `battery_state_of_charge`; if the entity is
-`sensor.r1t_battery_state_of_charge`, the slug is `r1t`. It appears twice near
-the top of the file. Restart Home Assistant.
+Home Assistant needs literal entity ids inside a trigger, so the vehicle slug
+appears in several places. Rather than editing them by hand, generate the
+package:
+
+```bash
+python3 tools/configure_ha.py --slug r1t --out <config>/packages/trmnl_rivian.yaml
+```
+
+Your slug is whatever prefixes your Rivian entities — check **Developer Tools →
+States** for `battery_state_of_charge`; if the entity is
+`sensor.r1t_battery_state_of_charge`, the slug is `r1t`. Restart Home Assistant.
 
 To push immediately rather than waiting for a change, run
 `rest_command.trmnl_rivian_push` from **Developer Tools → Actions** with
@@ -238,9 +240,17 @@ bitmap and check the Home Assistant side, which `trmnlp` does not cover:
 ```bash
 npm install
 npm run setup            # mirror the TRMNL framework bundle into vendor/ (~26 MB)
-npm run preview -- --view full --sample open
-npm run check            # validate the HA template, render every view, build the zip
+npm run preview -- --view full --sample everything
+npm run check            # lint, both test suites, every render, build the zip
 ```
+
+| | |
+|---|---|
+| `npm test` | 204 contract assertions over every view and sample |
+| `npm run test:ha` | 52 assertions over the Home Assistant template, across three entity tables |
+| `npm run lint:ha` | confirms the package names one vehicle slug consistently |
+| `npm run preview:all` | 32 renders into `preview/` |
+| `npm run build` | writes `dist/trmnl-rivian.zip` |
 
 `tools/render.mjs` renders Liquid through TRMNL's own public
 [`/api/markup`](https://docs.trmnl.com/go/private-api/introduction) endpoint —
@@ -257,8 +267,15 @@ node tools/render.mjs --view quadrant --sample low --device v2 --dark
 - `--device` `og` (800×480) · `v2` (1040×780)
 - `--dark` render in TRMNL's dark mode
 
-`tools/check_ha_template.py` renders the Home Assistant Jinja against a stubbed
-entity table and asserts the result — that a `Low` tire reads as flagged, that a
+`tools/test_views.mjs` renders every view through TRMNL's real Liquid and
+asserts behaviour rather than pixels — no view errors, nothing leaks an
+unrendered tag, and, most importantly, **a sparse payload never invents an
+alarm**. A truck that has not reported yet must read as "nothing to report", not
+as one with four flat tires and the doors unlocked.
+
+`tools/check_ha_template.py` renders the Home Assistant Jinja against stubbed
+entity tables — a healthy vehicle, one reporting only a state of charge, and
+none at all — and asserts the result — that a `Low` tire reads as flagged, that a
 mismatched OTA version reads as an update pending, that `locked_state: off`
 reads as *locked*. A typo or a flipped sensor surfaces without a round trip
 through a live HA instance. It writes `samples/from-ha.json`, which you can then

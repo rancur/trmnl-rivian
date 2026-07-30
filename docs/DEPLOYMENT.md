@@ -16,7 +16,8 @@ agent — with access to the real accounts.
 |---|---|
 | Liquid markup for all four view sizes | ✅ verified by rendering against TRMNL's own `/api/markup` |
 | Pixel-accurate previews at 800×480 | ✅ 32 renders, light and dark, in `preview/` |
-| Home Assistant payload template | ✅ 20 assertions pass against a stubbed entity table |
+| Home Assistant payload template | ✅ 52 assertions across healthy, degraded and empty entity tables |
+| View behaviour | ✅ 204 contract assertions via `npm test` |
 | Plugin definition (`src/settings.yml`) | ✅ written, ❌ never uploaded |
 | Importable archive (`dist/trmnl-rivian.zip`) | ✅ builds, ❌ never imported |
 | Anything touching a real account | ❌ **all of this is unverified** |
@@ -103,10 +104,6 @@ and re-push.
 
 ## Step 3 — Wire up Home Assistant
 
-```bash
-cp homeassistant/trmnl_rivian.yaml <config>/packages/trmnl_rivian.yaml
-```
-
 ```yaml
 # configuration.yaml
 homeassistant:
@@ -118,10 +115,15 @@ homeassistant:
 trmnl_webhook_url: "https://trmnl.com/api/custom_plugins/<uuid>"
 ```
 
-Edit `packages/trmnl_rivian.yaml` and replace `r1t` with your slug. **It appears
-9 times** — `grep -c r1t` to confirm you got them all. Most are inside the two
-trigger-based sensors at the top, whose `entity_id:` fields must be literal and
-so cannot use the `vehicle` variable. Restart Home Assistant.
+Home Assistant requires literal entity ids inside a trigger, so the slug appears
+in 8 places. Do not edit them by hand — generate the package:
+
+```bash
+python3 tools/configure_ha.py --slug <your-slug> --out <config>/packages/trmnl_rivian.yaml
+```
+
+It refuses to write if any reference would be left behind. Restart Home
+Assistant.
 
 **Verify, in order:**
 
