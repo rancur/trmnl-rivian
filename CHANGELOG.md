@@ -1,16 +1,14 @@
 # Changelog
 
-## v2.0.0
+## v1.0.0
 
-The first release to have run against a live TRMNL device and a live Home
-Assistant — and the release that stops the screen lying when it has nothing to
-say.
+The first release. It has run against a live TRMNL device and a live Home
+Assistant — and it is the version that stops the screen lying when it has
+nothing to say.
 
-Major rather than minor because **the payload contract changed in a breaking
-way**: any field may now be JSON `null`, and anything consuming this data has to
-handle that. If you are running the v1.0.0 package, replace
-`homeassistant/trmnl_rivian.yaml` as well as the plugin markup. The two halves
-are versioned together.
+The payload contract is fixed here: **any field may be JSON `null`**, and
+anything consuming this data has to handle that. The plugin markup and the Home
+Assistant package are versioned together — install and upgrade them as a pair.
 
 ### Fixed — the screen no longer reports things it does not know
 
@@ -139,13 +137,13 @@ with every health flag `True`. It did not merely miss the bug, it certified it.
 
 ---
 
-## v1.0.0
+## Prior art — the unreleased first draft
 
 Never tagged, never released, and never run against live data — kept here
-because the v2.0.0 notes refer back to it.
+because the v1.0.0 notes refer back to it.
 
 A TRMNL private plugin showing Rivian vehicle status, fed from Home Assistant
-over a webhook. Its design survives into v2.0.0 essentially intact:
+over a webhook. Its design survives into v1.0.0 essentially intact:
 
 - State of charge as the headline figure, with a progress bar carrying a tick at
   the charge limit.

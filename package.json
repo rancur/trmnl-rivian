@@ -1,6 +1,6 @@
 {
   "name": "trmnl-rivian",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "private": true,
   "description": "A TRMNL private plugin showing Rivian state of charge, vehicle status and health, fed from Home Assistant",
   "type": "module",
