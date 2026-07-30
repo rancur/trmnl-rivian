@@ -43,7 +43,9 @@
   "last_charge_start_soc": 40,
   "last_charge_end_soc": 80,
   "last_charge_kwh": 45.0,
-  "last_charge_at": "2026-07-30T04:20:00-0700",
+  "last_charge_kwh_est": false,
   "moved_since_charge": false,
-  "updated_at": "2026-07-30T14:32:00-0700"
+  "link_age_min": 0,
+  "_age_min": 3,
+  "_last_charge_age_min": 615
 }

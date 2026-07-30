@@ -3,15 +3,12 @@
 // size or a state you weren't looking at.
 
 import { spawn } from 'node:child_process';
-import { readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { sampleNames } from './samples.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const VIEWS = ['full', 'half_horizontal', 'half_vertical', 'quadrant'];
-const samples = readdirSync(`${root}/samples`)
-  .filter((f) => f.endsWith('.json'))
-  .map((f) => f.replace(/\.json$/, ''))
-  .sort();
+const samples = sampleNames();
 
 const run = (args) =>
   new Promise((ok, fail) => {

@@ -1,23 +1,26 @@
 <div class="layout layout--col layout--left gap--small">
 
   <div class="flex flex--col flex--left gap--none">
-    <span class="title title--small">{{ status_line }}</span>
+    <div class="flex flex--row flex--center-y gap--xsmall">
+      <span class="title title--small">{{ status_line }}</span>
+      {% if stale %}<span class="label label--small label--filled">{{ stale_label }}</span>{% endif %}
+    </div>
     <div class="flex flex--row flex--bottom gap--xsmall">
-      <span class="value value--xxlarge value--tnums">{{ soc }}</span>
-      <span class="value value--small">%</span>
+      <span class="value value--xxlarge value--tnums">{{ soc_display }}</span>
+      {% if soc_known %}<span class="value value--small">%</span>{% endif %}
     </div>
   </div>
 
   <div class="flex flex--col flex--left gap--small w--full">
     <div class="progress-bar progress-bar--small w--full">
       <div class="track">
-        <div class="fill" style="width: {{ soc }}%"></div>
-        <div class="charge-limit" style="left: {{ soc_limit }}%"></div>
+        {% if soc_known %}<div class="fill" style="width: {{ soc }}%"></div>{% endif %}
+        {% if soc_limit != nil %}<div class="charge-limit" style="left: {{ soc_limit }}%"></div>{% endif %}
       </div>
     </div>
     <div class="flex flex--row flex--between w--full">
-      <span class="label label--small">{%- if charging and charge_power > 0 -%}{{ charge_power }} kW &middot; {{ eta }}{%- elsif show_last_charge -%}Last charge +{{ last_charge_delta }}% &middot; {{ last_charge_kwh }} kWh{%- endif -%}</span>
-      <span class="label label--small">Limit {{ soc_limit }}%</span>
+      <span class="label label--small" data-clamp="1">{{ charge_line }}</span>
+      {% if soc_limit != nil %}<span class="label label--small">Limit {{ soc_limit }}%</span>{% endif %}
     </div>
   </div>
 
@@ -25,12 +28,12 @@
 
   <div class="grid grid--cols-3 gap--small w--full">
     <div class="col--span-2 flex flex--col flex--left gap--small w--full">
-      {% render "stat", label: "Range", value: range, unit: distance_unit %}
+      {% render "stat", label: "Range", value: range_display, unit: range_unit %}
       {% render "stat", label: "Cabin", value: cabin_display %}
-      {% if charging %}
+      {% if charging == true %}
         {% render "stat", label: "Full in", value: eta %}
       {% else %}
-        {% render "stat", label: "Odometer", value: odometer_fmt, unit: distance_unit %}
+        {% render "stat", label: "Odometer", value: odometer_display, unit: odometer_unit %}
       {% endif %}
     </div>
     <div class="col--span-1 flex flex--col flex--center-x w--full">
@@ -48,9 +51,9 @@
       {% render "check", label: "Tires", ok: tires_ok %}
       {% render "check", label: "12V", ok: battery_12v_ok %}
     </div>
-    {% unless closures_ok %}
+    {% if closures_ok == false %}
       <span class="label label--small" data-clamp="1">{{ closure_summary }}</span>
-    {% endunless %}
+    {% endif %}
   </div>
 
 </div>
@@ -58,5 +61,7 @@
 <div class="title_bar">
   {% if logo_url %}<img class="image" src="{{ logo_url }}" />{% else %}{{ vehicle_mark }}{% endif %}
   <span class="title">{{ display_name }}</span>
-  {% if updated_fmt != "" %}<span class="instance">{{ updated_fmt }}</span>{% endif %}
+  {%- comment -%} Narrowest title bar with a timestamp: drops the weekday, keeps
+    the date, because the date is the part that survives a frozen screen. {%- endcomment -%}
+  <span class="instance">{% if updated_short != "" %}{{ updated_short }}{% else %}No data{% endif %}</span>
 </div>
