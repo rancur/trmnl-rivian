@@ -2,7 +2,7 @@
 
   <div class="flex flex--row flex--bottom flex--between w--full">
     <div class="flex flex--col flex--left gap--none">
-      <span class="label label--small">State of charge</span>
+      <span class="title title--small">{{ status_line }}</span>
       <div class="flex flex--row flex--bottom gap--xsmall">
         <span class="value value--xlarge value--tnums">{{ soc }}</span>
         <span class="value value--xsmall">%</span>
@@ -19,7 +19,7 @@
   </div>
 
   <div class="flex flex--row flex--center-y flex--between w--full">
-    <span class="label label--small">{{ mode_detail }}</span>
+    <span class="label label--small">{% if charging and charge_power > 0 %}{{ charge_power }} kW &middot; {{ eta }}{% else %}{{ closure_summary }}{% endif %}</span>
     {% if issue_count == 0 %}
       <span class="label label--small">&#10003;&nbsp;{{ health_summary }}</span>
     {% else %}

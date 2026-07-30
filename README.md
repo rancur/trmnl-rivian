@@ -35,7 +35,8 @@ All four TRMNL sizes are implemented, so the plugin behaves in mashups:
 | **Range** | Estimated remaining range in your Home Assistant unit |
 | **Cabin** | Interior temperature — useful for deciding whether to precondition |
 | **Full in** | Time to charge limit while plugged in; swaps to odometer otherwise |
-| **Vehicle diagram** | Top-down schematic; open closures and flagged tires fill solid |
+| **Status line** | What it is doing and where — "Charging at Home", "Driving", "In service" |
+| **Vehicle diagram** | Top-down schematic; panels open the way they actually open |
 | **Health row** | Locked, Closed, Tires, 12V, Fluids, Software — ticked or inverted |
 | **Badges** | Low charge, preconditioning, pet mode |
 
@@ -44,6 +45,10 @@ the Home Assistant device registry, and falls back to the model. The plugin's
 **Vehicle Label** custom field overrides both if you want something else.
 
 ## Setup
+
+> **Deploying for the first time?** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) is
+> the step-by-step handoff — what is verified, what is still guesswork, and how
+> to check each step. Nothing here has run against a live account yet.
 
 ### 1. Create the plugin in TRMNL
 
@@ -168,6 +173,9 @@ The webhook posts a flat `merge_variables` object, ~800 bytes:
   "temp_unit": "F",
   "odometer": 12000,
   "gear": "Park",
+  "location": "Home",
+  "driving": false,
+  "service_mode": false,
   "locked": true,
   "plugged_in": true,
   "charging": true,
@@ -194,7 +202,9 @@ Anything that produces this shape works — Home Assistant is just the convenien
 source. Closures are per-position booleans rather than lists because the diagram
 needs to know *which* panel to fill; the human-readable lists are derived in
 Liquid. `body_style` is `truck` or `suv`. Booleans ending in `_ok` are true when
-healthy, so a missing field never invents an alarm.
+healthy, so a missing field never invents an alarm. `location` is a zone name
+from Home Assistant and is blank when the truck is somewhere unnamed — rename
+your zones and the screen follows.
 
 Three optional fields, settable either in the payload or as plugin custom
 fields in TRMNL:
