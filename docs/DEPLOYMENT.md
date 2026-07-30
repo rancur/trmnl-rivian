@@ -10,6 +10,42 @@ agent — with access to the real accounts.
 
 ---
 
+## If you are an agent picking this up
+
+**Ask for these first.** Nothing below works without them, and none are in the
+repo:
+
+| | |
+|---|---|
+| TRMNL account | with the Developer add-on or a BYOD licence |
+| TRMNL device access token | Devices → Edit → Developer Perks. Needed to read back what is actually on the screen |
+| Home Assistant URL + long-lived token | or shell access to the HA config directory |
+| The vehicle's entity slug | or enough HA access to look it up yourself |
+
+**You can verify your own work end to end.** That is the point of the loop in
+[Step 3a](#step-3a--check-what-is-actually-on-the-screen): TRMNL will hand you a
+PNG of the live screen, and this repo can render the same payload locally, so
+you can compare rather than guess. Use it after every change. Do not report
+success from a 200 response — a webhook can be accepted and still render a
+screen full of zeroes.
+
+**Definition of done:**
+
+1. `npm run check` passes.
+2. A real payload from Home Assistant reaches TRMNL and the fetched screen
+   matches the local render of the same data.
+3. Every row in [Step 4](#step-4--confirm-the-guesses) has been checked against
+   the real truck and the package corrected where it was wrong.
+4. Anything you corrected is committed with a note on what the real value was —
+   those are the repo's remaining unknowns and the next person needs them.
+
+**Do not** change the Liquid to make bad data look acceptable. If a figure is
+wrong the entity mapping in `homeassistant/trmnl_rivian.yaml` is wrong; fix it
+there. The views are covered by `npm test` and a change that breaks the sparse
+payload contract will fail it.
+
+---
+
 ## What is already done
 
 | | |
@@ -151,6 +187,42 @@ Assistant.
 
 ---
 
+## Step 3a — Check what is actually on the screen
+
+Do not trust a `200` from the webhook. TRMNL will give you the rendered image,
+so compare it against what this repo produces for the same data.
+
+Grab the device access token from **Devices → Edit → Developer Perks**, then:
+
+```bash
+# What the device is showing right now
+curl -s https://trmnl.com/api/current_screen \
+  --header "access-token: $TRMNL_DEVICE_TOKEN" | tee /tmp/screen.json
+
+curl -s "$(python3 -c 'import json;print(json.load(open("/tmp/screen.json"))["image_url"])')" \
+  -o /tmp/live.png
+```
+
+Then render the same payload locally and put them side by side:
+
+```bash
+# Capture exactly what Home Assistant sent
+cp <the payload you posted>.json samples/live.json
+npm run preview -- --view full --sample live --out preview/live-local.png
+```
+
+`/tmp/live.png` and `preview/live-local.png` are both 800×480 1-bit renders of
+the same markup. They should be materially identical — small differences in the
+title bar instance name are expected, anything else is a real discrepancy.
+
+`GET /api/display` also works but **advances the playlist**, so prefer
+`current_screen` when you only want to look.
+
+If the live screen is blank or stale, click **Force Refresh** on the plugin
+first: TRMNL skips regeneration when the merge variables have not changed.
+
+---
+
 ## Step 4 — Confirm the guesses
 
 Seven values were inferred from source code, not observed. Each is written to fail
@@ -214,6 +286,12 @@ minutes is the floor without TRMNL+.
 | `429` from the webhook | Rate limit. Raise the throttle in the automation's condition. |
 
 ## Iterating on the design
+
+Both need network access to `trmnl.com`: `npm run setup` mirrors the framework
+bundle, and the tests render Liquid through TRMNL's public `/api/markup`.
+Rendering needs a Chromium — the script uses Playwright's own unless
+`PLAYWRIGHT_BROWSERS_PATH` or `CHROMIUM_PATH` points at one, so
+`npx playwright install chromium` is the fix if it complains.
 
 ```bash
 npm install && npm run setup
