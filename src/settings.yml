@@ -13,8 +13,14 @@ name: Rivian
 # internet and no long-lived HA token leaves your network.
 strategy: webhook
 
-# Ceiling on how often TRMNL re-renders when no webhook arrives. Screens
-# regenerate on receipt anyway, and only when the merge variables changed.
+# Minutes, and one of TRMNL's accepted values (15 | 60 | 360 | 720 | 1440).
+#
+# Worth knowing what this does NOT do: TRMNL deduplicates at the data layer, so
+# a payload identical to the last one is dropped before the render step. The
+# screen is not re-rendered on this interval "just because" — it is re-rendered
+# when new, different content arrives. That is why the Home Assistant package
+# sends a bucketed `link_age_min`: it is what makes a dead feed produce a
+# genuinely different payload, and therefore a screen that can say so.
 refresh_interval: 15
 
 no_screen_padding: 'no'
@@ -23,10 +29,47 @@ dark_mode: 'no'
 # Pinned so a framework release can't silently reflow the layout — every view
 # in this repo was verified against 3.1. Bump deliberately, then re-run
 # `npm run preview:all` and check all four sizes. Use `latest` to track the
-# newest release instead.
+# newest release instead. Current versions: https://trmnl.com/framework/releases
 framework_version: '3.1'
 
 custom_fields:
+  # TRMNL's publishing guidance asks every recipe for an author bio carrying at
+  # least one way to reach the author, and asks webhook plugins in particular to
+  # state their setup requirements up front. This one is blunt about the cost,
+  # because the worst version of this plugin is the one someone installs before
+  # discovering it needs a paid add-on, a Home Assistant instance and a pinned
+  # integration.
+  #
+  # NOTE before publishing: add `category:` with up to two values chosen from
+  # TRMNL's own category list in the publish UI. It is deliberately not guessed
+  # here — a wrong value fails the CHEF linter.
+  - keyname: about
+    name: About This Plugin
+    field_type: author_bio
+    description: >-
+      Shows a Rivian R1T/R1S on your TRMNL: state of charge, range, cabin
+      temperature, what is still open, and a health row.<br/><br/>
+      <b>This plugin needs real setup — please read before installing.</b>
+      It does not talk to Rivian itself. It renders whatever a Home Assistant
+      instance sends it, so you need:<br/>
+      1. <b>Home Assistant</b>, with the community
+      <a href="https://github.com/bretterer/home-assistant-rivian">Rivian
+      integration</a> installed and your vehicle reporting entities.<br/>
+      2. <b>TRMNL's Developer add-on or a BYOD licence</b> — private plugins
+      cannot receive a webhook without one. The add-on is a one-time $20 and is
+      linked to a single device, so a second TRMNL needs its own.<br/>
+      3. <b>About twenty minutes</b> to copy a Home Assistant package in and
+      paste your webhook URL into it.<br/><br/>
+      Upstream caveat: Rivian changed their API in 2026. Live charge rate in kW
+      is currently unavailable to the integration, and location needs a
+      community patch — the setup guide explains exactly what to pin. Charge
+      percentage, charger state and time-to-limit are unaffected.<br/><br/>
+      Built to fail honestly: a sensor that did not report renders as "?" or a
+      dash, never as 0% or a green tick, and the panel says so when the data
+      behind it goes stale.
+    github_url: https://github.com/rancur/trmnl-rivian
+    learn_more_url: https://github.com/rancur/trmnl-rivian#setup
+
   - keyname: vehicle_label
     name: Vehicle Label
     field_type: string
@@ -37,7 +80,7 @@ custom_fields:
 
   - keyname: logo_url
     name: Logo URL
-    field_type: string
+    field_type: url
     optional: true
     description: >-
       Replaces the title bar mark with an image of your choosing. Must be a URL

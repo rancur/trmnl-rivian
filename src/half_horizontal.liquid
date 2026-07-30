@@ -5,23 +5,26 @@
     <div class="col--span-3 flex flex--col flex--left gap--small w--full">
       <div class="flex flex--row flex--bottom gap--large">
         <div class="flex flex--col flex--left gap--none">
-          <span class="title title--small">{{ status_line }}</span>
+          <div class="flex flex--row flex--center-y gap--xsmall">
+            <span class="title title--small">{{ status_line }}</span>
+            {% if stale %}<span class="label label--small label--filled">{{ stale_label }}</span>{% endif %}
+          </div>
           <div class="flex flex--row flex--bottom gap--xsmall">
-            <span class="value value--xlarge value--tnums">{{ soc }}</span>
-            <span class="value value--xsmall">%</span>
+            <span class="value value--xlarge value--tnums">{{ soc_display }}</span>
+            {% if soc_known %}<span class="value value--xsmall">%</span>{% endif %}
           </div>
         </div>
-        {% render "stat", label: "Range", value: range, unit: distance_unit %}
+        {% render "stat", label: "Range", value: range_display, unit: range_unit %}
         {% render "stat", label: "Cabin", value: cabin_display %}
-        {% if charging %}
+        {% if charging == true %}
           {% render "stat", label: "Full in", value: eta %}
         {% endif %}
       </div>
 
       <div class="progress-bar progress-bar--xsmall w--full">
         <div class="track">
-          <div class="fill" style="width: {{ soc }}%"></div>
-          <div class="charge-limit" style="left: {{ soc_limit }}%"></div>
+          {% if soc_known %}<div class="fill" style="width: {{ soc }}%"></div>{% endif %}
+          {% if soc_limit != nil %}<div class="charge-limit" style="left: {{ soc_limit }}%"></div>{% endif %}
         </div>
       </div>
 
@@ -34,7 +37,7 @@
           {% render "check", label: "Fluids", ok: fluids_ok %}
         </div>
         <span class="label label--small" data-clamp="1">
-          {% if closures_ok %}{{ mode_detail }}{% else %}{{ closure_summary }}{% endif %}
+          {% if closures_ok == false %}{{ closure_summary }}{% else %}{{ mode_detail }}{% endif %}
         </span>
       </div>
     </div>
@@ -52,5 +55,5 @@
 <div class="title_bar">
   {% if logo_url %}<img class="image" src="{{ logo_url }}" />{% else %}{{ vehicle_mark }}{% endif %}
   <span class="title">{{ display_name }}</span>
-  {% if updated_fmt != "" %}<span class="instance">Updated {{ updated_fmt }}</span>{% endif %}
+  <span class="instance">{{ updated_label }}</span>
 </div>

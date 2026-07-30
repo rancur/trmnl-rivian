@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Render the Home Assistant payload template against a stubbed entity table.
+"""Render the Home Assistant payload template against stubbed entity tables.
 
-Catches Jinja mistakes, invalid JSON, wrong sensor polarity and payloads over
-TRMNL's webhook size limit without needing a live Home Assistant. Writes the
-result to samples/from-ha.json so the same payload can be rendered by
-tools/render.mjs.
+Catches Jinja mistakes, invalid JSON, wrong sensor polarity, wrong entity names
+and payloads over TRMNL's webhook size limit without needing a live Home
+Assistant. Writes the result to samples/from-ha.json so the same payload can be
+rendered by tools/render.mjs.
+
+The scenario that matters most is `no entities at all`. An earlier version of
+this file asserted that an empty entity table produced `soc: 0` and every health
+flag `True` — it did not merely miss the silent-zero bug, it certified it. A
+missing sensor is now required to be JSON null, and the assertion is generic, so
+adding a new field cannot quietly reintroduce the coercion.
 """
 
 import json
@@ -19,13 +25,43 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 WEBHOOK_LIMIT = 2048  # bytes, free tier
 TZ = timezone(timedelta(hours=-7))
 
+# A fixed clock, so link-age arithmetic is deterministic.
+NOW = datetime(2026, 7, 30, 14, 35, tzinfo=TZ)
+LAST_CHANGED = datetime(2026, 7, 30, 14, 32, tzinfo=TZ)
+
+# Every field that describes the vehicle rather than the plugin. Each one must
+# be null when its sensor did not report — never 0, never False, never "".
+NULLABLE = [
+    "soc", "soc_limit", "range", "cabin_temp", "odometer", "gear",
+    "driving", "service_mode", "locked", "plugged_in", "charging",
+    "charge_power", "charge_eta_min", "preconditioning", "pet_mode",
+    "door_fl", "door_fr", "door_rl", "door_rr",
+    "win_fl", "win_fr", "win_rl", "win_rr",
+    "frunk", "tonneau", "tailgate", "tunnel_l", "tunnel_r",
+    "tire_fl", "tire_fr", "tire_rl", "tire_rr",
+    "battery_12v_ok", "fluids_ok", "software_ok",
+    "last_charge_start_soc", "last_charge_end_soc", "last_charge_kwh",
+]
+
+CONTRACT = NULLABLE + [
+    "vehicle", "model", "body_style", "distance_unit", "temp_unit",
+    "location", "last_charge_at", "last_charge_kwh_est",
+    "moved_since_charge", "updated_at", "link_age_min",
+]
+
 # A mid-charge R1T with the front-left window down, the tailgate up, a soft rear
 # tyre and a pending software update. Values follow the polarity the
 # bretterer/home-assistant-rivian integration actually uses — notably
 # `locked_state` is a LOCK binary sensor, so "on" means UNLOCKED.
+#
+# Entity ids are built from each entity's *display name*, not the integration's
+# internal key. That is why the 12V check reads `12v_battery_health`: the key is
+# `twelve_volt_battery_health` but the name is "12V Battery Health", and reading
+# the key spelling matched no entity at all, so the check passed green forever.
 STATES = {
     "sensor.r1t_battery_state_of_charge": ("64", {"unit_of_measurement": "%"}),
     "sensor.r1t_battery_state_of_charge_limit": ("80", {"unit_of_measurement": "%"}),
+    "sensor.r1t_battery_capacity": ("141.5", {"unit_of_measurement": "kWh"}),
     "sensor.r1t_estimated_vehicle_range": ("201.4", {"unit_of_measurement": "mi"}),
     "sensor.r1t_cabin_temperature": ("21.6", {"unit_of_measurement": "°C"}),
     "sensor.r1t_odometer": ("18432.7", {"unit_of_measurement": "mi"}),
@@ -39,7 +75,7 @@ STATES = {
     "sensor.r1t_tire_pressure_front_right_status": ("OK", {}),
     "sensor.r1t_tire_pressure_rear_left_status": ("Low", {}),
     "sensor.r1t_tire_pressure_rear_right_status": ("OK", {}),
-    "sensor.r1t_twelve_volt_battery_health": ("good", {}),
+    "sensor.r1t_12v_battery_health": ("good", {}),
     "sensor.r1t_brake_fluid_level_low": ("false", {}),
     "sensor.r1t_software_ota_current_version": ("2026.18.0", {}),
     "sensor.r1t_software_ota_available_version": ("2026.20.1", {}),
@@ -49,14 +85,25 @@ STATES = {
     "binary_sensor.r1t_charging_status": ("on", {}),
     "binary_sensor.r1t_cabin_climate_preconditioning": ("off", {}),
     "binary_sensor.r1t_pet_mode": ("off", {}),
+    "binary_sensor.r1t_door_front_left": ("off", {}),
+    "binary_sensor.r1t_door_front_right": ("off", {}),
+    "binary_sensor.r1t_door_rear_left": ("off", {}),
+    "binary_sensor.r1t_door_rear_right": ("off", {}),
     "binary_sensor.r1t_window_front_left": ("on", {}),
+    "binary_sensor.r1t_window_front_right": ("off", {}),
+    "binary_sensor.r1t_window_rear_left": ("off", {}),
+    "binary_sensor.r1t_window_rear_right": ("off", {}),
+    "binary_sensor.r1t_front_trunk": ("off", {}),
+    "binary_sensor.r1t_tonneau": ("off", {}),
     "binary_sensor.r1t_tailgate": ("on", {}),
+    "binary_sensor.r1t_gear_tunnel_left": ("off", {}),
+    "binary_sensor.r1t_gear_tunnel_right": ("off", {}),
     "device_tracker.r1t_location": ("home", {}),
-    # Frozen when the last session ended; the truck has not been driven since
+    # Frozen when the last session ended; the vehicle has not been driven since
     # (odometer matches), so the last-charge caliper should show.
     "sensor.rivian_last_charge": (
         "2026-07-30T04:20:00-0700",
-        {"start_soc": 39, "end_soc": 80, "kwh": 44.8, "odometer": 18433},
+        {"start_soc": 39, "end_soc": 80, "kwh": 44.8, "kwh_est": 58.0, "odometer": 18433},
     ),
 }
 
@@ -64,13 +111,19 @@ DEVICE = {"name": "R1T", "name_by_user": "Gluten Free Grocery Getter", "model": 
 
 
 class State:
-    def __init__(self, value, attrs):
+    def __init__(self, value, attrs, reported_ago_min=0):
         self.state = value
         self.attributes = attrs
-        self.last_changed = datetime(2026, 7, 30, 14, 32, tzinfo=TZ)
+        self.last_changed = LAST_CHANGED
+        self.last_updated = LAST_CHANGED
+        # `last_reported` advances on every poll even when the value is
+        # unchanged, which is what makes it a liveness signal rather than a
+        # change signal.
+        self.last_reported = NOW - timedelta(minutes=reported_ago_min)
 
 
 ACTIVE = {}  # entity table for the scenario currently under test
+REPORTED_AGO = 0  # minutes since the integration last reported, for this scenario
 
 
 def states(entity=None):
@@ -88,7 +141,7 @@ class StatesLookup:
     def __getitem__(self, entity):
         if entity not in ACTIVE:
             return None
-        return State(*ACTIVE[entity])
+        return State(*ACTIVE[entity][:2], reported_ago_min=REPORTED_AGO)
 
 
 def is_state(entity, value):
@@ -106,46 +159,130 @@ class LenientLoader(yaml.SafeLoader):
 LenientLoader.add_multi_constructor("!", lambda loader, suffix, node: f"<{suffix}>")
 
 
-def load_template():
+def _sensors():
     path = ROOT / "homeassistant" / "trmnl_rivian.yaml"
     config = yaml.load(path.read_text(), Loader=LenientLoader)
-    # The package has several template blocks; find the one holding the payload
-    # rather than depending on its position.
-    template = next(
-        (
-            sensor["attributes"]["payload"]
-            for block in config["template"]
-            for sensor in block.get("sensor", [])
-            if "payload" in sensor.get("attributes", {})
-        ),
+    # The package has several template blocks; find sensors by what they expose
+    # rather than by position.
+    return [s for block in config["template"] for s in block.get("sensor", [])]
+
+
+def load_template():
+    return next(
+        (s["attributes"]["payload"] for s in _sensors()
+         if "payload" in s.get("attributes", {})),
         None,
     )
-    return template
 
 
-def render(template, table):
+def load_alert_template():
+    return next(
+        (s["state"] for s in _sensors() if s.get("unique_id") == "rivian_trmnl_alert_key"),
+        None,
+    )
+
+
+def render(template, table, reported_ago_min=0):
     """Render the payload template against a given entity table."""
-    global ACTIVE
+    global ACTIVE, REPORTED_AGO
     ACTIVE = table
+    REPORTED_AGO = reported_ago_min
     env = Environment()
     env.filters["to_json"] = json.dumps
     env.filters["as_local"] = lambda d: d.astimezone(TZ)
-    rendered = env.from_string(template).render(
+    return env.from_string(template).render(
         states=StatesLookup(),
         is_state=is_state,
         state_attr=state_attr,
+        now=lambda: NOW,
         # Returns none for an unknown entity, exactly as Home Assistant does,
         # so the guard around device_attr is exercised.
         device_id=lambda entity: "dev_1" if entity in ACTIVE else None,
         device_attr=lambda dev, attr: DEVICE.get(attr) if dev else None,
     )
-    return rendered
 
 
-def scenario(label, template, table, expected, required=()):
+def alert_key(alert_template, merge):
+    """Render the priority fingerprint for a given payload."""
+    body = json.dumps({"merge_variables": merge})
+    env = Environment()
+    env.filters["from_json"] = json.loads
+    global ACTIVE
+    ACTIVE = {"sensor.rivian_trmnl_payload": ("ok", {"payload": body})}
+    return env.from_string(alert_template).render(state_attr=state_attr).strip()
+
+
+def check_alert_key(payload_template):
+    """The fingerprint decides which changes are allowed to jump the rate-limit
+    queue, so it has to be sensitive to exactly the right things: a tailgate
+    opening must never be held back, and a state of charge ticking up must never
+    spend a push.
+    """
+    print("\n--- priority fingerprint ---")
+    alert = load_alert_template()
+    if alert is None:
+        print("no `rivian_trmnl_alert_key` sensor found")
+        return 1
+
+    # Start from a quiet, everything-fine vehicle so each mutation below is a
+    # genuine transition rather than a no-op against the healthy fixture.
+    base = json.loads(render(payload_template, STATES))["merge_variables"] | {
+        "locked": True, "charging": False, "plugged_in": False,
+        "service_mode": False, "tailgate": False, "door_fr": False,
+        "tire_fr": True, "battery_12v_ok": True, "soc": 64, "link_age_min": 0,
+    }
+    key = alert_key(alert, base)
+
+    cases = [
+        # (label, mutation, must the fingerprint change?)
+        ("state of charge drifts", {"soc": base["soc"] + 1}, False),
+        ("range drifts", {"range": base["range"] - 3}, False),
+        ("cabin warms up", {"cabin_temp": base["cabin_temp"] + 4}, False),
+        ("odometer ticks", {"odometer": base["odometer"] + 1}, False),
+        ("timestamp moves", {"updated_at": "2026-07-30T15:00:00-0700"}, False),
+        ("tailgate opens", {"tailgate": True}, True),
+        ("vehicle is unlocked", {"locked": False}, True),
+        ("charging starts", {"charging": True}, True),
+        ("a door opens", {"door_fr": True}, True),
+        ("a tyre is flagged", {"tire_fr": False}, True),
+        ("a sensor goes silent", {"battery_12v_ok": None}, True),
+        ("the feed goes quiet", {"link_age_min": 180}, True),
+        ("charge falls below 15%", {"soc": 12}, True),
+        ("service mode engages", {"service_mode": True}, True),
+    ]
+
+    failures = 0
+    for label, mutation, should_change in cases:
+        # A mutation that does not actually change the payload would pass the
+        # "must not change" cases for the wrong reason.
+        if all(base.get(k) == v for k, v in mutation.items()):
+            failures += 1
+            print(f"  {label}: mutation is a no-op against the base payload")
+            continue
+        mutated = alert_key(alert, {**base, **mutation})
+        changed = mutated != key
+        if changed != should_change:
+            failures += 1
+            verb = "should have changed" if should_change else "should NOT have changed"
+            print(f"  {label}: fingerprint {verb}")
+    if failures:
+        return 1
+
+    # Home Assistant truncates a sensor state past 255 characters, which would
+    # silently collapse distinct states into one.
+    if len(key) > 255:
+        print(f"fingerprint is {len(key)} characters; Home Assistant caps state at 255")
+        return 1
+
+    print(f"{len(cases) + 1} assertions passed (fingerprint is {len(key)} characters)")
+    return 0
+
+
+def scenario(label, template, table, expected, reported_ago_min=0,
+             all_null=False, write_sample=False):
     print(f"\n--- {label} ---")
     try:
-        rendered = render(template, table)
+        rendered = render(template, table, reported_ago_min)
     except Exception as exc:  # noqa: BLE001 - any Jinja failure is a test failure
         print(f"template raised {type(exc).__name__}: {exc}")
         return 1
@@ -168,36 +305,48 @@ def scenario(label, template, table, expected, required=()):
         print("payload exceeds the webhook size limit")
         return 1
 
-    contract = [
-        "vehicle", "model", "body_style", "soc", "soc_limit", "range",
-        "distance_unit", "cabin_temp", "temp_unit", "odometer", "gear", "locked",
-        "plugged_in", "charging", "charge_power", "charge_eta_min",
-        "preconditioning", "pet_mode", "location", "driving", "service_mode",
-        "last_charge_start_soc", "last_charge_end_soc", "last_charge_kwh",
-        "last_charge_at", "moved_since_charge",
-        "door_fl", "door_fr", "door_rl", "door_rr",
-        "win_fl", "win_fr", "win_rl", "win_rr",
-        "frunk", "tonneau", "tailgate", "tunnel_l", "tunnel_r",
-        "tire_fl", "tire_fr", "tire_rl", "tire_rr",
-        "battery_12v_ok", "fluids_ok", "software_ok", "updated_at",
-    ]
-    if missing := [k for k in contract if k not in merge]:
+    if missing := [k for k in CONTRACT if k not in merge]:
         print("missing keys:", ", ".join(missing))
         return 1
 
-    failures = [
+    checks = len(expected)
+
+    # The generic guard. Any nullable field that came back as a number, a
+    # boolean or an empty string when nothing reported is a silent-zero bug,
+    # whether or not anyone remembered to write an assertion for it.
+    if all_null:
+        lying = {k: merge[k] for k in NULLABLE if merge[k] is not None}
+        if lying:
+            print("fields coerced a missing sensor into a value instead of null:")
+            for key, value in sorted(lying.items()):
+                print(f"  {key}: {value!r}")
+            return 1
+        checks += len(NULLABLE)
+        print(f"all {len(NULLABLE)} vehicle fields are null")
+
+    if failures := [
         f"  {k}: expected {v!r}, got {merge.get(k)!r}"
         for k, v in expected.items()
         if merge.get(k) != v
-    ]
-    if failures:
+    ]:
         print(f"payload does not match the {label} scenario:")
         print("\n".join(failures))
         return 1
 
-    print(f"{len(expected)} assertions passed")
-    if required:
-        (ROOT / "samples" / "from-ha.json").write_text(json.dumps(merge, indent=2) + "\n")
+    print(f"{checks} assertions passed")
+
+    if write_sample:
+        out = dict(merge)
+        # Relative ages so the fixture does not rot; see tools/samples.mjs.
+        if out.get("updated_at"):
+            age = (NOW - datetime.strptime(out["updated_at"], "%Y-%m-%dT%H:%M:%S%z"))
+            out["_age_min"] = int(age.total_seconds() // 60)
+            del out["updated_at"]
+        if out.get("last_charge_at"):
+            age = (NOW - datetime.strptime(out["last_charge_at"], "%Y-%m-%dT%H:%M:%S%z"))
+            out["_last_charge_age_min"] = int(age.total_seconds() // 60)
+            del out["last_charge_at"]
+        (ROOT / "samples" / "from-ha.json").write_text(json.dumps(out, indent=2) + "\n")
         print("wrote samples/from-ha.json")
     return 0
 
@@ -208,8 +357,8 @@ def main():
         print("no template sensor exposes a `payload` attribute")
         return 1
 
-    # A healthy truck: mid-charge, window down, tailgate up, soft rear tire,
-    # pending software update, parked at home after a timed overnight session.
+    # 1. A healthy vehicle: mid-charge, window down, tailgate up, soft rear tire,
+    #    pending software update, parked at home after a timed overnight session.
     healthy = {
         "vehicle": "Gluten Free Grocery Getter",
         "body_style": "truck",
@@ -229,33 +378,49 @@ def main():
         "service_mode": False,
         "last_charge_start_soc": 39,
         "last_charge_end_soc": 80,
-        "last_charge_kwh": 44.8,
-        "moved_since_charge": False,  # odometer 18433 rounded == snapshot
+        "last_charge_kwh": 44.8,       # metered, so the estimate is not used
+        "last_charge_kwh_est": False,
+        "moved_since_charge": False,   # odometer 18433 rounded == snapshot
+        "link_age_min": 0,             # everything reported just now
     }
 
-    # Integration installed but the vehicle has not reported yet: only the SOC
-    # sensor exists. Nothing may crash, and nothing may invent an alarm.
+    # 2. Integration installed but the vehicle has not reported yet: only the SOC
+    #    sensor exists. Nothing may crash, and nothing may be invented.
     degraded = {
-        "locked": True,          # no lock sensor is not "unlocked"
-        "tire_fl": True, "tire_fr": True, "tire_rl": True, "tire_rr": True,
-        "battery_12v_ok": True,
-        "fluids_ok": True,
-        "software_ok": True,     # no available version means nothing pending
-        "charging": False,
-        "plugged_in": False,
-        "driving": False,
-        "service_mode": False,
+        "soc": 64,
+        "locked": None,          # a silent lock sensor is NOT "locked"
+        "tire_fl": None, "tire_fr": None, "tire_rl": None, "tire_rr": None,
+        "battery_12v_ok": None,
+        "fluids_ok": None,
+        "software_ok": None,
+        "charging": None,
+        "plugged_in": None,
+        "driving": None,
+        "service_mode": None,
+        "charge_power": None,
         "location": "",
         "moved_since_charge": True,   # no snapshot means nothing to report
     }
 
-    # Nothing at all: the integration is not set up, or every entity is
-    # unavailable. device_id() returns none, so the device-registry guard runs.
-    empty = dict(degraded, soc=0, vehicle="Rivian", model="", updated_at="")
+    # 3. The realistic total failure. One field removed upstream takes the whole
+    #    vehicleState subscription down, so every entity reads `unavailable`
+    #    rather than disappearing — and `unavailable` must not be a number.
+    unavailable_table = {k: ("unavailable", {}) for k in STATES}
 
-    rc = scenario("healthy vehicle", template, STATES, healthy, required=True)
+    # 4. Rivian's live-session query is retired, so charge rate and metered
+    #    session energy go dark while everything from vehicleState keeps working.
+    dark_session = {k: v for k, v in STATES.items()
+                    if k not in ("sensor.r1t_charging_speed",
+                                 "sensor.r1t_charging_energy_delivered")}
+    dark_session["sensor.rivian_last_charge"] = (
+        "2026-07-30T04:20:00-0700",
+        {"start_soc": 39, "end_soc": 80, "kwh": None, "kwh_est": 58.0, "odometer": 18433},
+    )
+
+    rc = scenario("healthy vehicle", template, STATES, healthy, write_sample=True)
     if rc:
         return rc
+
     rc = scenario(
         "degraded: only a state of charge",
         template,
@@ -264,11 +429,82 @@ def main():
     )
     if rc:
         return rc
-    return scenario("no entities at all", template, {}, empty)
-    out.write_text(json.dumps(merge, indent=2) + "\n")
-    print(json.dumps(merge, indent=2))
-    print(f"\nall {len(expected)} assertions passed -> wrote {out.relative_to(ROOT)}")
-    return 0
+
+    rc = scenario(
+        "no entities at all",
+        template,
+        {},
+        {"vehicle": "Rivian", "model": "", "updated_at": "", "link_age_min": 2880},
+        all_null=True,
+    )
+    if rc:
+        return rc
+
+    rc = scenario(
+        "every entity unavailable (the vehicleState cascade)",
+        template,
+        unavailable_table,
+        # Freshness must not count an entity that just changed *to* unavailable,
+        # or a dying feed looks like it has only this second refreshed.
+        {"updated_at": "", "link_age_min": 2880},
+        all_null=True,
+    )
+    if rc:
+        return rc
+
+    rc = scenario(
+        "live-session query retired: no charge rate, energy is an estimate",
+        template,
+        dark_session,
+        {
+            "soc": 64,                    # vehicleState, still fine
+            "charging": True,             # vehicleState (chargerState)
+            "plugged_in": True,           # vehicleState (chargerStatus)
+            "charge_eta_min": 95,         # vehicleState (timeToEndOfCharge)
+            "charge_power": None,         # live session only — must not be 0
+            "last_charge_kwh": 58.0,      # falls back to the SOC estimate
+            "last_charge_kwh_est": True,  # and says so
+        },
+    )
+    if rc:
+        return rc
+
+    rc = scenario(
+        "link gone quiet for three hours",
+        template,
+        STATES,
+        {"soc": 64, "link_age_min": 180},
+        reported_ago_min=185,
+    )
+    if rc:
+        return rc
+
+    # The bug that made the 12V check pass green forever: the entity is named
+    # after its display name, not the integration's internal key.
+    old_name = dict(STATES)
+    del old_name["sensor.r1t_12v_battery_health"]
+    old_name["sensor.r1t_twelve_volt_battery_health"] = ("poor", {})
+    rc = scenario(
+        "12V: the old key spelling matches nothing",
+        template,
+        old_name,
+        {"battery_12v_ok": None},
+    )
+    if rc:
+        return rc
+
+    bad_12v = dict(STATES)
+    bad_12v["sensor.r1t_12v_battery_health"] = ("poor", {})
+    rc = scenario(
+        "12V: a genuinely poor battery is flagged",
+        template,
+        bad_12v,
+        {"battery_12v_ok": False},
+    )
+    if rc:
+        return rc
+
+    return check_alert_key(template)
 
 
 if __name__ == "__main__":

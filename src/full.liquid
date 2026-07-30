@@ -7,20 +7,26 @@
 
       <div class="flex flex--row flex--center-y gap--small">
         <span class="title title--small">{{ status_line }}</span>
+        {% if stale %}<span class="label label--small label--filled">{{ stale_label }}</span>{% endif %}
         {% if low_charge %}<span class="label label--small label--filled">Low charge</span>{% endif %}
-        {% if preconditioning %}<span class="label label--small label--outline">Preconditioning</span>{% endif %}
-        {% if pet_mode %}<span class="label label--small label--outline">Pet mode</span>{% endif %}
+        {% if preconditioning == true %}<span class="label label--small label--outline">Preconditioning</span>{% endif %}
+        {% if pet_mode == true %}<span class="label label--small label--outline">Pet mode</span>{% endif %}
       </div>
 
       <div class="flex flex--row flex--bottom gap--xsmall">
-        <span class="value value--xxxlarge value--tnums">{{ soc }}</span>
-        <span class="value value--base">%</span>
+        <span class="value value--xxxlarge value--tnums">{{ soc_display }}</span>
+        {% if soc_known %}<span class="value value--base">%</span>{% endif %}
       </div>
 
+      {%- comment -%}
+        An empty track with no fill is the honest drawing of an unknown charge.
+        A zero-width fill would look like a flat battery, which is a different
+        and much more alarming claim.
+      {%- endcomment -%}
       <div class="progress-bar progress-bar--base w--full">
         <div class="track">
-          <div class="fill" style="width: {{ soc }}%"></div>
-          <div class="charge-limit" style="left: {{ soc_limit }}%"></div>
+          {% if soc_known %}<div class="fill" style="width: {{ soc }}%"></div>{% endif %}
+          {% if soc_limit != nil %}<div class="charge-limit" style="left: {{ soc_limit }}%"></div>{% endif %}
         </div>
       </div>
 
@@ -32,27 +38,22 @@
       {% endif %}
 
       <div class="flex flex--row flex--center-y flex--between w--full">
-        <span class="label label--small">
-          {%- if charging and charge_power > 0 -%}
-            {{ charge_power }} kW &middot; {{ eta }} to limit
-          {%- elsif show_last_charge -%}
-            Last charge +{{ last_charge_delta }}% &middot; {{ last_charge_kwh }} kWh &middot; {{ last_charge_fmt }}
-          {%- endif -%}
-        </span>
-        <span class="label label--small">Limit {{ soc_limit }}%</span>
+        <span class="label label--small">{{ charge_line }}</span>
+        {% if soc_limit != nil %}<span class="label label--small">Limit {{ soc_limit }}%</span>{% endif %}
       </div>
 
       <div class="divider"></div>
 
       <div class="grid grid--cols-3 gap--medium w--full">
-        {% render "stat", label: "Range", value: range, unit: distance_unit %}
+        {% render "stat", label: "Range", value: range_display, unit: range_unit %}
         {% render "stat", label: "Cabin", value: cabin_display %}
-        {% render "stat", label: "Odometer", value: odometer_fmt, unit: distance_unit %}
+        {% render "stat", label: "Odometer", value: odometer_display, unit: odometer_unit %}
       </div>
 
     </div>
 
-    <!-- The truck itself: anything open fills solid -->
+    <!-- The vehicle itself: anything open fills solid, and the outline goes
+         dashed when the closure sensors have not reported -->
     <div class="col--span-1 flex flex--col flex--center-x w--full">
       <div class="w--full flex flex--row flex--center-x flex--center-y" style="height: 288px">
         {% if vehicle_image_url %}
@@ -66,7 +67,7 @@
 
   </div>
 
-  <!-- Everything the truck could be unhappy about, in one row -->
+  <!-- Everything the vehicle could be unhappy about, in one row -->
   <div class="flex flex--col gap--small w--full">
     <div class="divider"></div>
     <div class="flex flex--row flex--center-y flex--left gap--medium w--full">
@@ -82,9 +83,9 @@
       Its own full-width line: with five things open the list is far too long to
       share a row with the checks.
     {%- endcomment -%}
-    {% unless closures_ok %}
+    {% if closures_ok == false %}
       <span class="label label--small" data-clamp="1">{{ closure_summary }}</span>
-    {% endunless %}
+    {% endif %}
   </div>
 
 </div>
@@ -96,5 +97,5 @@
     {{ vehicle_mark }}
   {% endif %}
   <span class="title">{{ display_name }}</span>
-  {% if updated_fmt != "" %}<span class="instance">Updated {{ updated_fmt }}</span>{% endif %}
+  <span class="instance">{{ updated_label }}</span>
 </div>
