@@ -68,6 +68,17 @@ custom_fields:
     github_url: https://github.com/rancur/trmnl-rivian
     learn_more_url: https://github.com/rancur/trmnl-rivian#setup
 
+  # Required by TRMNL for webhook plugins, and genuinely needed here: this is
+  # the only place an installing user can read the URL their own Home Assistant
+  # has to POST to. Without it the plugin is unpublishable and, more to the
+  # point, unconfigurable by anyone but its author.
+  - keyname: webhook_url
+    name: Webhook URL
+    field_type: copyable_webhook_url
+    description: >-
+      Copy this into Home Assistant as `trmnl_webhook_url` in secrets.yaml.
+      Your own Home Assistant posts your Rivian data here; nothing else reads it.
+
   - keyname: vehicle_label
     name: Vehicle Label
     field_type: string
