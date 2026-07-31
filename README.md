@@ -546,7 +546,7 @@ npm run check            # lint, both test suites, every render, build the zip
 | `npm test` | 393 contract assertions over every view and sample |
 | `npm run test:ha` | 146 assertions over the Home Assistant template and the priority fingerprint |
 | `npm run lint:ha` | confirms the package names one vehicle slug consistently |
-| `npm run preview:all` | 48 renders into `preview/` |
+| `npm run preview:all` | 48 renders into `preview/` — every view against every sample |
 | `npm run build` | writes `dist/trmnl-rivian.zip` |
 
 ```bash
@@ -557,6 +557,15 @@ node tools/render.mjs --view quadrant --sample low --device v2 --dark
 - `--sample` any file in `samples/`
 - `--device` `og` (800×480) · `v2` (1040×780)
 - `--dark` render in TRMNL's dark mode
+- `--out` write somewhere other than `preview/<view>-<sample>.png`
+
+`preview/` therefore holds 49 images: the 48 above, plus the dark-mode example
+shown earlier, which is the one render `preview:all` does not produce. Regenerate
+it alongside the others whenever the samples change:
+
+```bash
+node tools/render.mjs --view full --sample charging --dark --out preview/full-charging-dark.png
+```
 
 `tools/render.mjs` renders Liquid through TRMNL's own public
 [`/api/markup`](https://docs.trmnl.com/go/private-api/introduction) endpoint —

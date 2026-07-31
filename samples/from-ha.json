@@ -6,7 +6,7 @@
   "soc_limit": 80,
   "range": 200,
   "distance_unit": "mi",
-  "cabin_temp": 22,
+  "cabin_temp": 20,
   "temp_unit": "C",
   "odometer": 12000,
   "gear": "Park",
