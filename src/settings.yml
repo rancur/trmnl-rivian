@@ -9,6 +9,12 @@
 
 name: Rivian
 
+# Up to two values from TRMNL's own category list, as offered in the publish UI.
+# These two are what the plugin is already filed under there.
+category:
+  - travel
+  - personal
+
 # Home Assistant pushes to TRMNL, so HA never needs to be exposed to the
 # internet and no long-lived HA token leaves your network.
 strategy: webhook
@@ -42,11 +48,11 @@ custom_fields:
   # No contact address by design: the repository's issue tracker is the support
   # channel, so there is one public route and no personal inbox behind it.
   #
-  # NOTE before publishing: add `category:` with up to two values chosen from
-  # TRMNL's own category list in the publish UI. It is deliberately not guessed
-  # here — a wrong value fails the CHEF linter. If the linter turns out to
-  # require a contact email as well, use a project alias or the issue tracker
-  # URL; do not put a personal address here.
+  # NOTE before publishing: `category:` is set at the top of this file. Confirm
+  # both values still match TRMNL's category list in the publish UI — a value
+  # not on that list fails the CHEF linter. If the linter turns out to require a
+  # contact email as well, use a project alias or the issue tracker URL; do not
+  # put a personal address here.
   - keyname: about
     name: About This Plugin
     field_type: author_bio

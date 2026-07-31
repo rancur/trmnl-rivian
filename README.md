@@ -543,7 +543,7 @@ npm run check            # lint, both test suites, every render, build the zip
 
 | | |
 |---|---|
-| `npm test` | 389 contract assertions over every view and sample |
+| `npm test` | 393 contract assertions over every view and sample |
 | `npm run test:ha` | 146 assertions over the Home Assistant template and the priority fingerprint |
 | `npm run lint:ha` | confirms the package names one vehicle slug consistently |
 | `npm run preview:all` | 48 renders into `preview/` |

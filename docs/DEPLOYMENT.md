@@ -255,7 +255,7 @@ renders, so an unchanged screen usually means unchanged data rather than a bug.
 
 ## Step 5 — Confirm the guesses
 
-Six values were inferred from source code, not observed on a real vehicle. Each
+Seven values were inferred from source code, not observed on a real vehicle. Each
 is written so that an unrecognised reading produces `?` rather than a false
 tick or a false alarm — so a wrong guess is visible but quiet.
 **Check each one and correct the package.**
